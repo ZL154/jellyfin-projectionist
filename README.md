@@ -25,7 +25,7 @@ A Jellyfin plugin that plays preroll videos before movies **and** TV episodes. F
 
 > Built because every other Jellyfin preroll plugin either (a) requires you to create a Jellyfin library full of preroll files that then clutters your homepage, or (b) only works for movies. Projectionist solves both.
 
-> ⚠️ **Episode preroll support requires the [FileTransformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) plugin** to be installed alongside Projectionist. Movies work without it. See [Installation](#️-installation) for the FileTransformation install URL.
+> ℹ️ Projectionist injects its episode-preroll script via its own ASP.NET middleware, so it works **standalone** in most setups. The optional [FileTransformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) plugin is supported as a fallback in case a reverse proxy or an unusual deployment swallows the inline injection — install it only if episode prerolls don't fire after a hard refresh.
 
 ---
 
@@ -43,7 +43,7 @@ A Jellyfin plugin that plays preroll videos before movies **and** TV episodes. F
 - [License](#-license)
 
 - 🗂️ **Folder-based.** Point at a folder and you're done. We create + manage the hidden Jellyfin library transparently and remove it from every user's home screen automatically.
-- 📺 **Episodes too.** A bundled web-client patch (loaded via the FileTransformation plugin) hooks the playback manager so episodes also fetch intros, which the vanilla web client refuses to do.
+- 📺 **Episodes too.** A bundled web-client patch is injected into Jellyfin's `index.html` (via Projectionist's own ASP.NET middleware — no extra plugin required for standard installs) and hooks the playback manager so episodes also fetch intros, which the vanilla web client refuses to do.
 - 🧠 **Smart selection.** Cooldown so you don't see the same intro on every rewatch. Maturity gating so your edgy ident doesn't play before *Bluey*. Skip-on-resume. First-of-binge for TV. Per-user rules.
 - 🎃 **Seasonal / scheduled prerolls.** Drop a `halloween.mp4` and a `xmas.mp4` next to your default — they auto-trigger on the right dates.
 - 📊 **Stats.** Per-file + per-user playback counters with a live dashboard.
@@ -120,19 +120,17 @@ This is the same pattern Achievement Badges, StarTrack, and other "real" plugins
 
 ## 🛠️ Installation
 
-> ### ⚠️ For episode prerolls you also need FileTransformation
+> ### ℹ️ Projectionist works standalone — FileTransformation is an optional fallback
 >
-> Jellyfin's web client only natively fetches intros for movies. Projectionist ships a small JavaScript hook that adds the same behaviour for episodes — but the hook needs to be injected into Jellyfin's `index.html`, and the cleanest way to do that is via the [**FileTransformation**](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) plugin.
+> Jellyfin's web client only natively fetches intros for movies. Projectionist ships a small JavaScript hook that adds the same behaviour for episodes, and injects it into Jellyfin's `index.html` via its own ASP.NET middleware (`IStartupFilter`). This works out of the box in standard Jellyfin installs.
 >
-> **If you only care about prerolls before movies, skip this — Projectionist works standalone.**
+> **Install FileTransformation only as a fallback** if episode prerolls don't fire after a hard refresh — usually a sign that a reverse proxy is caching `index.html` or otherwise swallowing the inline injection. Projectionist autodetects FileTransformation at runtime and will use it as a second injection path if present.
 >
-> If you want them before episodes too, install FileTransformation **first**:
+> To install the optional fallback:
 >
 > 1. Dashboard → Plugins → Repositories → **+**
-> 2. Paste this URL: `https://www.iamparadox.dev/jellyfin/plugins/manifest.json`
-> 3. Save → Catalog → install **File Transformation**
-> 4. Restart Jellyfin
-> 5. Then continue with the Projectionist install below
+> 2. Paste: `https://www.iamparadox.dev/jellyfin/plugins/manifest.json`
+> 3. Save → Catalog → install **File Transformation** → Restart
 
 ### Plugin repository (recommended)
 
@@ -306,15 +304,15 @@ Targets Jellyfin 10.11 ABI (`Jellyfin.Controller` 10.11.0).
 | 10.11.x  | ✅ tested |
 | 10.10.x  | ⚠️ untested (needs ABI bump in csproj + meta.json) |
 
-Movie support has zero dependencies. **Episode support** requires the [FileTransformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) plugin (any version, autodetected at runtime).
+**Zero hard dependencies.** Both movie and episode prerolls work out of the box on standard Jellyfin installs (Projectionist injects its episode hook via its own ASP.NET middleware).
 
-Install FileTransformation by adding this URL to **Dashboard → Plugins → Repositories**:
+If episode prerolls don't fire on your setup — usually because a reverse proxy is caching `index.html` — install [FileTransformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) as a fallback. Add this manifest URL to **Dashboard → Plugins → Repositories** and install **File Transformation** from the catalog:
 
 ```
 https://www.iamparadox.dev/jellyfin/plugins/manifest.json
 ```
 
-Then install **File Transformation** from the catalog and restart Jellyfin.
+Projectionist autodetects FileTransformation at runtime and uses it as a second injection path when present.
 
 
 ---
