@@ -118,20 +118,34 @@ This is the same pattern Achievement Badges, StarTrack, and other "real" plugins
 
 ## 🛠️ Installation
 
+### Plugin repository (recommended)
+
+One-click install + auto-updates. Add this URL to **Dashboard → Plugins → Repositories**:
+
+```
+https://raw.githubusercontent.com/ZL154/jellyfin-projectionist/main/manifest.json
+```
+
+Then:
+
+1. Dashboard → Plugins → Repositories → **+** (top-right)
+2. **Repository Name:** anything (e.g. `Projectionist`)
+3. **Repository URL:** paste the URL above
+4. **Save**
+5. Switch to the **Catalog** tab → find **Projectionist** under General → Install
+6. Restart Jellyfin when prompted
+7. **Install the [FileTransformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) plugin** if you haven't already — required for preroll-before-episodes (movies work without it)
+8. Dashboard → Plugins → Projectionist → configure
+
 ### Manual install
 
-1. Grab `Jellyfin.Plugin.Projectionist.dll` and `meta.json` from [Releases](https://github.com/ZL154/jellyfin-projectionist/releases).
-2. Create a folder in your Jellyfin plugins directory:
-   - **Docker:** `<config-volume>/plugins/Projectionist_1.0.0.0/`
-   - **Bare metal:** `<jellyfin-data>/plugins/Projectionist_1.0.0.0/`
-3. Copy both files into that folder.
-4. **Install the FileTransformation plugin** if you don't already have it (required for episode support — movies work without it).
-5. Restart Jellyfin.
-6. Dashboard → Plugins → Projectionist → configure.
-
-### Plugin repository (coming soon)
-
-Once a public manifest is published, you'll be able to add the repo URL to **Dashboard → Plugins → Repositories** for one-click install + auto-updates.
+1. Download `projectionist_1.0.2.0.zip` from the [latest release](https://github.com/ZL154/jellyfin-projectionist/releases/latest).
+2. Extract it into your Jellyfin plugins directory so the path looks like:
+   - **Docker:** `<config-volume>/plugins/Projectionist_1.0.2.0/`
+   - **Bare metal:** `<jellyfin-data>/plugins/Projectionist_1.0.2.0/`
+3. Install the FileTransformation plugin (see step 7 above).
+4. Restart Jellyfin.
+5. Dashboard → Plugins → Projectionist → configure.
 
 ---
 
