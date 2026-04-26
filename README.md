@@ -29,7 +29,6 @@ A Jellyfin plugin that plays preroll videos before movies **and** TV episodes. F
 
 ## 📑 Table of contents
 
-- [Why this exists](#-why-this-exists)
 - [Core features](#-core-features) — source, triggers, smart selection, advanced rules, stats
 - [Episode support](#-episode-support-its-not-trivial)
 - [Installation](#️-installation)
@@ -40,18 +39,6 @@ A Jellyfin plugin that plays preroll videos before movies **and** TV episodes. F
 - [Building from source](#-building-from-source)
 - [Compatibility](#-compatibility)
 - [License](#-license)
-
----
-
-## ✨ Why this exists
-
-Every other Jellyfin preroll plugin we tried hits the same wall:
-
-- **Cinema Mode** (CherryFloors) requires a Jellyfin library you have to create and maintain manually, and only works for movies — never episodes.
-- **Intros**-style plugins generally don't ship with episode support at all.
-- All of them clutter your homepage with the preroll library tile, and the only "fix" most users find is to disable the library entirely (which then breaks playback with `Unable to find a valid media source to play`).
-
-Projectionist solves all of this:
 
 - 🗂️ **Folder-based.** Point at a folder and you're done. We create + manage the hidden Jellyfin library transparently and remove it from every user's home screen automatically.
 - 📺 **Episodes too.** A bundled web-client patch (loaded via the FileTransformation plugin) hooks the playback manager so episodes also fetch intros, which the vanilla web client refuses to do.
