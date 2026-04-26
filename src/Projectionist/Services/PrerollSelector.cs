@@ -50,10 +50,13 @@ public sealed class PrerollSelector
             // Schedule filter (e.g. holiday-only prerolls)
             if (p.Schedule is not null && !p.Schedule.Matches(nowLocal)) return false;
 
-            // Maturity gate: preroll rating must NOT exceed feature rating
+            // Maturity gate: preroll rating must NOT exceed feature rating.
+            // Untagged prerolls are scored 0 (always pass), untagged features are
+            // scored 100 (don't gate). The gate only activates when both sides
+            // declare an explicit rating.
             if (config.MaturityGated)
             {
-                var prerollScore = MaturityRanker.Score(p.Rating);
+                var prerollScore = MaturityRanker.ScorePreroll(p.Rating);
                 if (prerollScore > maturityScore) return false;
             }
 
@@ -223,9 +226,21 @@ public sealed class PrerollSelector
     // ---------- Maturity ranker (rough but useful) ----------
     internal static class MaturityRanker
     {
-        public static int Score(string? rating)
+        /// <summary>
+        /// Score for the FEATURE. Unknown defaults HIGH so any preroll is allowed
+        /// (we don't gate on a feature we can't classify).
+        /// </summary>
+        public static int Score(string? rating) => ScoreInternal(rating, unknown: 100);
+
+        /// <summary>
+        /// Score for a PREROLL. Unknown defaults LOW so an untagged preroll
+        /// always passes — the gate only kicks in when both sides are tagged.
+        /// </summary>
+        public static int ScorePreroll(string? rating) => ScoreInternal(rating, unknown: 0);
+
+        private static int ScoreInternal(string? rating, int unknown)
         {
-            if (string.IsNullOrWhiteSpace(rating)) return 100; // unknown = treat as adult
+            if (string.IsNullOrWhiteSpace(rating)) return unknown;
             var r = rating.Trim().ToUpperInvariant();
             // US MPAA
             if (r.Contains("NC-17")) return 100;

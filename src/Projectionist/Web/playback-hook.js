@@ -14,6 +14,78 @@
 // Top-level log so we can see in the browser console whether this script even loaded.
 try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
 
+// ============== Hide the internal Projectionist library from the home screen ==============
+// We can't use BlockedMediaFolders (it would prevent streaming the prerolls) so
+// we hide the library tile + section client-side via CSS + a DOM mutation observer.
+(function () {
+    'use strict';
+    var STYLE_ID = 'pjt-hide-library-style';
+    var LIB_NAME = 'Projectionist Prerolls';
+
+    function ensureStyle() {
+        if (document.getElementById(STYLE_ID)) return;
+        var s = document.createElement('style');
+        s.id = STYLE_ID;
+        // Cards in the Latest / My Media / Libraries grids carry the library
+        // name in a `data-libraryid` attribute that's resolvable via the card
+        // body. We can't easily map id->name in CSS, so we walk the DOM.
+        // The CSS rule itself just hides anything we tag with our marker class.
+        s.textContent = '.pjt-hidden-library{display:none!important;visibility:hidden!important;}';
+        document.head.appendChild(s);
+    }
+
+    function hideLibraryTiles(root) {
+        try {
+            var nodes = (root || document).querySelectorAll(
+                '.card a[href*="/web/#/list.html"], .card .cardText a, ' +
+                '.card .cardText, .card .cardImageContainer'
+            );
+            // The reliable target: any card whose visible label text matches the
+            // library name. Walk all cards on the page and tag matching ones.
+            var cards = (root || document).querySelectorAll(
+                '.card, .listItem, .navMenuOption, button.emby-button, a.emby-button'
+            );
+            cards.forEach(function (card) {
+                if (card.classList.contains('pjt-hidden-library')) return;
+                var text = (card.textContent || '').trim();
+                // Exact-match by library name; broad-match by URL contains "ProjectionistPrerolls".
+                if (text === LIB_NAME ||
+                    text.indexOf(LIB_NAME) === 0 ||
+                    (card.querySelector && card.querySelector('a[href*="ProjectionistPrerolls"]'))) {
+                    card.classList.add('pjt-hidden-library');
+                }
+                // Also walk up to the parent .card if we matched a child element
+                if (card.classList.contains('pjt-hidden-library')) {
+                    var parentCard = card.closest && card.closest('.card');
+                    if (parentCard && parentCard !== card) parentCard.classList.add('pjt-hidden-library');
+                }
+            });
+        } catch (_) {}
+    }
+
+    function startHider() {
+        ensureStyle();
+        hideLibraryTiles(document);
+        // Re-run when the DOM changes (Jellyfin's web client is heavily SPA-driven)
+        try {
+            var obs = new MutationObserver(function (mutations) {
+                // Throttle: only run if at least one added node has descendants
+                var any = mutations.some(function (m) { return m.addedNodes && m.addedNodes.length; });
+                if (any) hideLibraryTiles(document);
+            });
+            obs.observe(document.body, { childList: true, subtree: true });
+        } catch (_) {}
+        // Periodic safety net for stubborn SPA renders
+        setInterval(function () { hideLibraryTiles(document); }, 2500);
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', startHider);
+    } else {
+        startHider();
+    }
+})();
+
 // ============== Skip-preroll button overlay ==============
 // Appears in the lower-right of the player while a preroll is active. Reads
 // configuration from /Plugins/Projectionist/Config so the user's "min seconds
