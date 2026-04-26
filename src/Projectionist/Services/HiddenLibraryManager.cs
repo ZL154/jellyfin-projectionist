@@ -4,11 +4,14 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Data;
+using Jellyfin.Database.Implementations;
+using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Database.Implementations.Enums;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Configuration;
 using MediaBrowser.Model.Entities;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.Projectionist.Services;
@@ -26,16 +29,19 @@ public sealed class HiddenLibraryManager
 
     private readonly ILibraryManager _libraryManager;
     private readonly IUserManager _userManager;
+    private readonly IDbContextFactory<JellyfinDbContext> _dbFactory;
     private readonly ILogger<HiddenLibraryManager> _logger;
     private readonly object _lock = new();
 
     public HiddenLibraryManager(
         ILibraryManager libraryManager,
         IUserManager userManager,
+        IDbContextFactory<JellyfinDbContext> dbFactory,
         ILogger<HiddenLibraryManager> logger)
     {
         _libraryManager = libraryManager;
         _userManager = userManager;
+        _dbFactory = dbFactory;
         _logger = logger;
     }
 
@@ -199,78 +205,97 @@ public sealed class HiddenLibraryManager
         if (existing is null) return;
         if (!Guid.TryParse(existing.ItemId, out var folderId)) return;
 
-        foreach (var user in _userManager.Users.ToList())
+        // Critical: User entities returned by IUserManager are detached from the
+        // DbContext that ultimately persists, so SetPreference + UpdateUserAsync
+        // doesn't actually save the new Preferences. We use the DbContext directly.
+        var userIds = _userManager.Users.Select(u => u.Id).ToList();
+        await using var ctx = await _dbFactory.CreateDbContextAsync().ConfigureAwait(false);
+        var savedAny = false;
+
+        foreach (var userId in userIds)
         {
-            if (user is null) continue;
             try
             {
+                var user = await ctx.Users
+                    .Include(u => u.Preferences)
+                    .FirstOrDefaultAsync(u => u.Id == userId)
+                    .ConfigureAwait(false);
+                if (user is null) continue;
+
                 var changed = false;
 
-                // CRITICAL: do NOT add to BlockedMediaFolders. Doing so prevents the
-                // user from accessing items in this library, which means the player
-                // can't fetch MediaSourceInfo for our prerolls and playback fails
-                // with "Unable to find a valid media source to play".
-                // We only hide via the per-user home/section excludes below.
-                //
-                // Cleanup: if a previous version of this plugin added our folder to
-                // BlockedMediaFolders, remove it so playback starts working again.
-                var blocked = user.GetPreferenceValues<Guid>(PreferenceKind.BlockedMediaFolders).ToList();
-                var unblocked = blocked.RemoveAll(g => g == folderId);
-                if (unblocked > 0)
-                {
-                    user.SetPreference(PreferenceKind.BlockedMediaFolders, blocked.ToArray());
-                    changed = true;
-                }
-
-                // 1. OrderedViews — strip in case it was added (controls library tile order on home)
-                var ordered = user.GetPreferenceValues<Guid>(PreferenceKind.OrderedViews).ToList();
-                if (ordered.RemoveAll(g => g == folderId) > 0)
-                {
-                    user.SetPreference(PreferenceKind.OrderedViews, ordered.ToArray());
-                    changed = true;
-                }
-
-                // 2. GroupedFolders — strip in case it was auto-grouped
-                var grouped = user.GetPreferenceValues<Guid>(PreferenceKind.GroupedFolders).ToList();
-                if (grouped.RemoveAll(g => g == folderId) > 0)
-                {
-                    user.SetPreference(PreferenceKind.GroupedFolders, grouped.ToArray());
-                    changed = true;
-                }
-
-                // 3. LatestItemExcludes — keep our prerolls out of "Latest" rows
-                var latest = user.GetPreferenceValues<Guid>(PreferenceKind.LatestItemExcludes).ToList();
-                if (!latest.Contains(folderId))
-                {
-                    latest.Add(folderId);
-                    user.SetPreference(PreferenceKind.LatestItemExcludes, latest.ToArray());
-                    changed = true;
-                }
-
-                // 4. MyMediaExcludes — exclude from "My Media" home tile section
-                var myMedia = user.GetPreferenceValues<Guid>(PreferenceKind.MyMediaExcludes).ToList();
-                if (!myMedia.Contains(folderId))
-                {
-                    myMedia.Add(folderId);
-                    user.SetPreference(PreferenceKind.MyMediaExcludes, myMedia.ToArray());
-                    changed = true;
-                }
+                // Strip from BlockedMediaFolders if present — adding here would
+                // prevent the user from streaming items in our library, which
+                // breaks playback with "Unable to find a valid media source".
+                changed |= RemoveValueFromPreference(user, PreferenceKind.BlockedMediaFolders, folderId);
+                // Strip from OrderedViews and GroupedFolders so the library tile
+                // doesn't show up in the user's home / sidebar layout.
+                changed |= RemoveValueFromPreference(user, PreferenceKind.OrderedViews, folderId);
+                changed |= RemoveValueFromPreference(user, PreferenceKind.GroupedFolders, folderId);
+                // Add to the "exclude from latest" + "exclude from My Media" sets.
+                changed |= AddValueToPreference(user, PreferenceKind.LatestItemExcludes, folderId);
+                changed |= AddValueToPreference(user, PreferenceKind.MyMediaExcludes, folderId);
 
                 if (changed)
                 {
-                    await _userManager.UpdateUserAsync(user);
+                    savedAny = true;
                     _logger.LogInformation("[Projectionist] hid library from user {User}", user.Username);
-                }
-                else
-                {
-                    _logger.LogDebug("[Projectionist] library already hidden from user {User}", user.Username);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "[Projectionist] could not hide library from user {User}", user?.Username);
+                _logger.LogWarning(ex, "[Projectionist] could not hide library from user id {UserId}", userId);
             }
         }
+
+        if (savedAny)
+        {
+            try
+            {
+                await ctx.SaveChangesAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[Projectionist] SaveChangesAsync failed when persisting hide preferences");
+            }
+        }
+    }
+
+    private static bool AddValueToPreference(User user, PreferenceKind kind, Guid value)
+    {
+        var pref = user.Preferences.FirstOrDefault(p => p.Kind == kind);
+        var current = (pref?.Value ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .ToList();
+        var asString = value.ToString();
+        if (current.Contains(asString, StringComparer.OrdinalIgnoreCase)) return false;
+        current.Add(asString);
+        var joined = string.Join(",", current);
+        if (pref is null)
+        {
+            user.Preferences.Add(new Preference(kind, joined));
+        }
+        else
+        {
+            pref.Value = joined;
+        }
+        return true;
+    }
+
+    private static bool RemoveValueFromPreference(User user, PreferenceKind kind, Guid value)
+    {
+        var pref = user.Preferences.FirstOrDefault(p => p.Kind == kind);
+        if (pref is null) return false;
+        var current = (pref.Value ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .ToList();
+        var asString = value.ToString();
+        var removed = current.RemoveAll(s => string.Equals(s, asString, StringComparison.OrdinalIgnoreCase));
+        if (removed == 0) return false;
+        pref.Value = string.Join(",", current);
+        return true;
     }
 
     private static LibraryOptions BuildLibraryOptions(string folderPath) => new()

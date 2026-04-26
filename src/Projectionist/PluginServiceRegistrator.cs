@@ -25,5 +25,6 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
         services.AddSingleton<IIntroProvider, PrerollIntroProvider>();
         services.AddSingleton<IStartupFilter, IndexHtmlInjectionFilter>();
         services.AddHostedService<WebInjector>();
+        services.AddHostedService<HideOnStartupService>();
     }
 }

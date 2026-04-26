@@ -1,6 +1,6 @@
 {
   "category": "General",
-  "changelog": "v1.0.0 — first stable release.\n\nFeatures:\n- Folder-based source — no Jellyfin library required (auto-creates a hidden internal one)\n- Movies AND TV episodes (web-client patch via FileTransformation)\n- Multiple preroll folders + per-folder default tags\n- Sidecar metadata (.json next to each video) or folder-level prerolls.json: tags, weight, rating, schedule\n- Schedules: month / day-of-week / hour / MM-DD..MM-DD date ranges (seasonal prerolls)\n- Per-library and per-content-type rules with require/exclude tags\n- Per-user inclusion/exclusion (admin-only, kid-only, etc.)\n- Maturity gating (preroll rating must not exceed feature)\n- Cooldown per item (don't replay same preroll on rewatch)\n- Skip-on-resume\n- Session modes: every playback / first of session / once per day / first of binge\n- Series-specific prerolls (theme-preroll.mp4 in series folder)\n- Trailer mode (chain local trailers before features)\n- Skippable preroll button overlay with min-seconds delay\n- 5 selection modes: Random, Sequential, Weighted, Equal Rotation, Recency Boost\n- Stats dashboard (per-file + per-user playback counts)\n- Preview-in-browser modal\n- Configuration validation\n- Custom designed dark admin UI",
+  "changelog": "v1.0.1 — fix: hide-from-users now uses freshly-tracked User entities so per-user policy preferences actually persist; auto-runs the hide on every plugin startup so the library stays hidden across upgrades / restarts.\n\nv1.0.0 — first stable release.\n\nFeatures:\n- Folder-based source — no Jellyfin library required (auto-creates a hidden internal one)\n- Movies AND TV episodes (web-client patch via FileTransformation)\n- Multiple preroll folders + per-folder default tags\n- Sidecar metadata (.json next to each video) or folder-level prerolls.json: tags, weight, rating, schedule\n- Schedules: month / day-of-week / hour / MM-DD..MM-DD date ranges (seasonal prerolls)\n- Per-library and per-content-type rules with require/exclude tags\n- Per-user inclusion/exclusion (admin-only, kid-only, etc.)\n- Maturity gating (preroll rating must not exceed feature)\n- Cooldown per item (don't replay same preroll on rewatch)\n- Skip-on-resume\n- Session modes: every playback / first of session / once per day / first of binge\n- Series-specific prerolls (theme-preroll.mp4 in series folder)\n- Trailer mode (chain local trailers before features)\n- Skippable preroll button overlay with min-seconds delay\n- 5 selection modes: Random, Sequential, Weighted, Equal Rotation, Recency Boost\n- Stats dashboard (per-file + per-user playback counts)\n- Preview-in-browser modal\n- Configuration validation\n- Custom designed dark admin UI",
   "description": "Plays preroll videos before movies and TV episodes. Folder-based — no Jellyfin library required.",
   "guid": "a51f9a52-7c3b-4b89-9f10-4c8e2b3d1a5e",
   "name": "Projectionist",
@@ -8,7 +8,7 @@
   "owner": "AhmedMedia",
   "targetAbi": "10.11.0.0",
   "timestamp": "2026-04-26T00:00:00Z",
-  "version": "1.0.0.0",
+  "version": "1.0.1.0",
   "status": "Active",
   "autoUpdate": false,
   "assemblies": [

@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 AhmedMedia
+Copyright (c) 2026 ZL154 / AhmedMedia and Projectionist for Jellyfin contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -9,13 +9,50 @@ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 copies of the Software, and to permit persons to whom the Software is
 furnished to do so, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+----------------------------------------------------------------------------
+
+Third-party components and attributions
+----------------------------------------------------------------------------
+
+This plugin is a third-party extension for Jellyfin (https://jellyfin.org/)
+and is not affiliated with or endorsed by the Jellyfin project. Jellyfin
+itself is licensed under the GNU General Public License v2.0.
+
+The plugin references the following NuGet packages at build time, which
+remain the property of their respective authors and retain their own
+licenses:
+
+  - Jellyfin.Controller            (GPL-2.0)  https://github.com/jellyfin/jellyfin
+  - Jellyfin.Model                 (GPL-2.0)  https://github.com/jellyfin/jellyfin
+  - Jellyfin.Database.Implementations (GPL-2.0)  https://github.com/jellyfin/jellyfin
+
+Optional integration with the FileTransformation plugin by IAmParadox27
+(https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) for
+client-side script injection that enables preroll support before TV episodes.
+The plugin auto-detects FileTransformation at runtime and degrades gracefully
+when it isn't installed (movies still work).
+
+The bundled web client patch (`playback-hook.js`) is original work distributed
+under the same MIT license as the rest of the plugin. It interacts only with
+Jellyfin's public `playbackManager` and `ApiClient` JavaScript APIs.
+
+----------------------------------------------------------------------------
+
+Trademarks
+----------------------------------------------------------------------------
+
+"Jellyfin" is a trademark of the Jellyfin project. This plugin is not
+affiliated with, endorsed by, or sponsored by the Jellyfin project. All
+other product names, logos, and brands are property of their respective
+owners and used here for identification purposes only.
