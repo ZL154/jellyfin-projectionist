@@ -1,0 +1,41 @@
+{
+  "$schema": "Locale strings keyed by an i18n key. Used by the admin UI script — drop new files like strings.fr.json and they'll be picked up automatically.",
+  "header.title": "Projectionist",
+  "header.tagline": "Plays preroll videos before movies and episodes. Folder-based — no Jellyfin library required.",
+
+  "section.source": "Source",
+  "section.source.hint": "Folder Projectionist scans for preroll video files. Read-only.",
+
+  "section.rules": "Playback Rules",
+  "section.triggers": "Triggers",
+  "section.triggers.hint": "Which content types kick off a preroll.",
+  "section.selection": "Selection",
+  "section.selection.hint": "How prerolls are picked from the pool.",
+
+  "section.filters": "Filters",
+  "section.filters.runtime": "Runtime filters",
+
+  "section.smart": "Smart Selection",
+  "section.smart.hint": "Cooldowns, resume detection, maturity gating, per-user rules.",
+
+  "section.advanced": "Advanced",
+  "section.advanced.hint": "Multiple folders, per-library rules, schedules, trailer mode, series-specific prerolls.",
+
+  "section.library": "Internal Library",
+  "section.library.hint": "Jellyfin's player needs library items to stream. Projectionist creates a hidden library at your folder.",
+
+  "section.stats": "Stats",
+  "section.stats.hint": "Per-file and per-user playback counts.",
+
+  "btn.save": "Save",
+  "btn.discard": "Discard changes",
+  "btn.rescan": "Rescan folder",
+  "btn.preview": "Preview pick",
+  "btn.setup_library": "Set up library",
+  "btn.refresh_status": "Refresh status",
+  "btn.remove_library": "Remove library",
+  "btn.reset_stats": "Reset stats",
+  "btn.add_folder": "Add folder",
+  "btn.add_rule": "Add rule",
+  "btn.remove": "Remove"
+}

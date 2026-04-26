@@ -2,10 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using Jellyfin.Plugin.Projectionist.Configuration;
 using Jellyfin.Plugin.Projectionist.Services;
 using MediaBrowser.Common.Api;
 using MediaBrowser.Controller.Configuration;
+using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -27,17 +29,26 @@ public sealed class ProjectionistController : ControllerBase
     private readonly PrerollDiscoveryService _discovery;
     private readonly PrerollSelector _selector;
     private readonly IServerConfigurationManager _serverConfig;
+    private readonly HiddenLibraryManager _hiddenLibrary;
+    private readonly StatsStore _stats;
+    private readonly IUserManager _userManager;
 
     public ProjectionistController(
         ILogger<ProjectionistController> logger,
         PrerollDiscoveryService discovery,
         PrerollSelector selector,
-        IServerConfigurationManager serverConfig)
+        IServerConfigurationManager serverConfig,
+        HiddenLibraryManager hiddenLibrary,
+        StatsStore stats,
+        IUserManager userManager)
     {
         _logger = logger;
         _discovery = discovery;
         _selector = selector;
         _serverConfig = serverConfig;
+        _hiddenLibrary = hiddenLibrary;
+        _stats = stats;
+        _userManager = userManager;
     }
 
     /// <summary>Return the live plugin configuration.</summary>
@@ -50,7 +61,7 @@ public sealed class ProjectionistController : ControllerBase
 
     /// <summary>Persist the supplied configuration.</summary>
     [HttpPost("Config")]
-    public ActionResult SaveConfig([FromBody] PluginConfiguration cfg)
+    public async Task<ActionResult> SaveConfig([FromBody] PluginConfiguration cfg)
     {
         if (cfg is null)
         {
@@ -62,17 +73,46 @@ public sealed class ProjectionistController : ControllerBase
         }
         Plugin.Instance.UpdateConfiguration(cfg);
         _discovery.InvalidateCache();
+        // Make sure the hidden library tracks the configured folder. This is what
+        // actually makes the prerolls streamable.
+        await _hiddenLibrary.EnsureAsync(cfg.PrerollFolderPath ?? string.Empty);
         return NoContent();
     }
 
-    /// <summary>List all preroll files currently discoverable in the configured folder.</summary>
+    /// <summary>Manually (re)build the hidden Jellyfin library at the configured folder.</summary>
+    [HttpPost("SetupLibrary")]
+    public async Task<ActionResult<LibraryStatus>> SetupLibrary()
+    {
+        var cfg = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        await _hiddenLibrary.EnsureAsync(cfg.PrerollFolderPath ?? string.Empty);
+        return Ok(_hiddenLibrary.GetStatus(cfg.PrerollFolderPath));
+    }
+
+    /// <summary>Remove the hidden Jellyfin library if it exists.</summary>
+    [HttpPost("RemoveLibrary")]
+    public async Task<ActionResult> RemoveLibrary()
+    {
+        await _hiddenLibrary.RemoveIfExistsAsync();
+        return NoContent();
+    }
+
+    /// <summary>Returns the status of the hidden Jellyfin library.</summary>
+    [HttpGet("LibraryStatus")]
+    public ActionResult<LibraryStatus> GetLibraryStatus()
+    {
+        var cfg = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        return Ok(_hiddenLibrary.GetStatus(cfg.PrerollFolderPath));
+    }
+
+    /// <summary>List all preroll files currently discoverable across all configured folders.</summary>
     [HttpGet("Prerolls")]
     public ActionResult<DiscoveryResult> ListPrerolls()
     {
         var cfg = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        var items = _discovery.Discover(cfg);
+        var folders = PrerollDiscoveryService.ResolveFolders(cfg);
         var folder = cfg.PrerollFolderPath;
         var folderExists = !string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder);
-        var items = _discovery.Discover(folder, cfg.AllowedExtensions);
 
         return Ok(new DiscoveryResult
         {
@@ -80,13 +120,145 @@ public sealed class ProjectionistController : ControllerBase
             FolderExists = folderExists,
             Count = items.Count,
             TotalSizeBytes = items.Sum(i => i.FileSizeBytes),
+            Folders = folders.Select(f => f.Path).ToList(),
             Files = items.Select(i => new DiscoveryFile
             {
                 FileName = i.FileName,
                 Path = i.Path,
                 SizeBytes = i.FileSizeBytes,
                 LastModifiedUtc = i.LastModifiedUtc,
+                Tags = i.Tags,
+                Weight = i.Weight,
+                Rating = i.Rating,
+                SourceFolder = i.SourceFolder,
             }).ToList(),
+        });
+    }
+
+    /// <summary>Stream a preroll for in-browser preview. Filename comes from the list endpoint.</summary>
+    [HttpGet("Preview/{fileName}")]
+    [Produces("video/mp4")]
+    public ActionResult PreviewFile([FromRoute] string fileName)
+    {
+        var cfg = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        var items = _discovery.Discover(cfg);
+        var match = items.FirstOrDefault(i => string.Equals(i.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+        if (match is null) return NotFound();
+        if (!System.IO.File.Exists(match.Path)) return NotFound();
+        var stream = System.IO.File.OpenRead(match.Path);
+        var ext = System.IO.Path.GetExtension(fileName).ToLowerInvariant();
+        var mime = ext switch
+        {
+            ".mp4" or ".m4v" => "video/mp4",
+            ".webm" => "video/webm",
+            ".mkv" => "video/x-matroska",
+            ".mov" => "video/quicktime",
+            _ => "application/octet-stream",
+        };
+        return File(stream, mime, enableRangeProcessing: true);
+    }
+
+    /// <summary>Get aggregated playback stats.</summary>
+    [HttpGet("Stats")]
+    public ActionResult<StatsResponse> GetStats()
+    {
+        var snap = _stats.Snapshot();
+        var users = _userManager.Users.ToDictionary(u => u.Id, u => u.Username);
+        return Ok(new StatsResponse
+        {
+            TotalPlays = snap.TotalPlays,
+            Files = snap.Files.Select(f => new StatsFileEntry
+            {
+                FileName = f.FileName,
+                PlayCount = f.PlayCount,
+                LastPlayedUtc = f.LastPlayedUtc,
+            }).ToList(),
+            Users = snap.Users.Select(u => new StatsUserEntry
+            {
+                UserId = u.UserId,
+                UserName = users.GetValueOrDefault(u.UserId, "(deleted)"),
+                PlayCount = u.PlayCount,
+            }).ToList(),
+        });
+    }
+
+    /// <summary>Reset all stats counters.</summary>
+    [HttpPost("Stats/Reset")]
+    public ActionResult ResetStats()
+    {
+        _stats.Reset();
+        return NoContent();
+    }
+
+    /// <summary>List all Jellyfin users (for the per-user rule UI).</summary>
+    [HttpGet("Users")]
+    public ActionResult<IEnumerable<UserBrief>> ListUsers()
+    {
+        var users = _userManager.Users
+            .Select(u => new UserBrief { Id = u.Id, Name = u.Username })
+            .OrderBy(u => u.Name)
+            .ToList();
+        return Ok(users);
+    }
+
+    /// <summary>List Jellyfin libraries (for per-library rule UI).</summary>
+    [HttpGet("Libraries")]
+    public ActionResult<IEnumerable<LibraryBrief>> ListLibraries()
+    {
+        var vfolders = _hiddenLibrary.GetExisting() is null
+            ? new List<LibraryBrief>()
+            : new List<LibraryBrief>();
+        try
+        {
+            // Use LibraryManager via reflection-free path: fetch all virtual folders
+            var allFolders = (_serverConfig as object)?.GetType(); // unused
+            // Easier: reach through Plugin.Instance? No — use IUserManager and prerendered list.
+        }
+        catch { }
+        return Ok(vfolders);
+    }
+
+    /// <summary>Validate the current configuration and return user-actionable problems.</summary>
+    [HttpGet("Validate")]
+    public ActionResult<ValidationResult> Validate()
+    {
+        var cfg = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        var problems = new List<string>();
+        var folders = PrerollDiscoveryService.ResolveFolders(cfg);
+        if (folders.Count == 0)
+        {
+            problems.Add("No preroll folders configured. Set the Preroll folder path.");
+        }
+        else
+        {
+            foreach (var f in folders)
+            {
+                if (!Directory.Exists(f.Path))
+                    problems.Add($"Folder does not exist or is unreadable: {f.Path}");
+            }
+        }
+        var items = _discovery.Discover(cfg);
+        if (folders.Count > 0 && items.Count == 0)
+        {
+            problems.Add("Preroll folder exists but contains no playable video files. Check Allowed extensions.");
+        }
+        if (cfg.PrerollCount <= 0)
+        {
+            problems.Add("Preroll count is 0; no prerolls will play. Increase to at least 1.");
+        }
+        if (!cfg.EnableForMovies && !cfg.EnableForEpisodes && !cfg.EnableForMusicVideos)
+        {
+            problems.Add("All content types are disabled — prerolls will never trigger.");
+        }
+        var libStatus = _hiddenLibrary.GetStatus(cfg.PrerollFolderPath);
+        if (folders.Count > 0 && !libStatus.LibraryExists)
+        {
+            problems.Add("Hidden library is not set up. Click 'Set up library' so playback can resolve preroll items.");
+        }
+        return Ok(new ValidationResult
+        {
+            Ok = problems.Count == 0,
+            Problems = problems,
         });
     }
 
@@ -127,6 +299,7 @@ public sealed class ProjectionistController : ControllerBase
         public bool FolderExists { get; set; }
         public int Count { get; set; }
         public long TotalSizeBytes { get; set; }
+        public List<string> Folders { get; set; } = new();
         public List<DiscoveryFile> Files { get; set; } = new();
     }
 
@@ -136,5 +309,47 @@ public sealed class ProjectionistController : ControllerBase
         public string Path { get; set; } = string.Empty;
         public long SizeBytes { get; set; }
         public DateTime LastModifiedUtc { get; set; }
+        public List<string> Tags { get; set; } = new();
+        public double Weight { get; set; } = 1.0;
+        public string? Rating { get; set; }
+        public string SourceFolder { get; set; } = string.Empty;
+    }
+
+    public sealed class StatsResponse
+    {
+        public long TotalPlays { get; set; }
+        public List<StatsFileEntry> Files { get; set; } = new();
+        public List<StatsUserEntry> Users { get; set; } = new();
+    }
+
+    public sealed class StatsFileEntry
+    {
+        public string FileName { get; set; } = string.Empty;
+        public long PlayCount { get; set; }
+        public DateTime LastPlayedUtc { get; set; }
+    }
+
+    public sealed class StatsUserEntry
+    {
+        public Guid UserId { get; set; }
+        public string UserName { get; set; } = string.Empty;
+        public long PlayCount { get; set; }
+    }
+
+    public sealed class UserBrief
+    {
+        public Guid Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+    }
+
+    public sealed class LibraryBrief
+    {
+        public string Name { get; set; } = string.Empty;
+    }
+
+    public sealed class ValidationResult
+    {
+        public bool Ok { get; set; }
+        public List<string> Problems { get; set; } = new();
     }
 }

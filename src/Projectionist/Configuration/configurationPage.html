@@ -308,13 +308,61 @@
                     height: 1px;
                     background: var(--pjt-border);
                 }
+
+                .pjt-modal-overlay {
+                    position: fixed; inset: 0; background: rgba(0,0,0,.7);
+                    display: none; align-items: center; justify-content: center;
+                    z-index: 99998; backdrop-filter: blur(8px);
+                }
+                .pjt-modal-overlay.pjt-show { display: flex; }
+                .pjt-modal {
+                    background: var(--pjt-surface); border: 1px solid var(--pjt-border-hot);
+                    border-radius: 8px; padding: 20px; max-width: 880px; width: 92%;
+                    box-shadow: 0 24px 60px rgba(0,0,0,.6);
+                }
+                .pjt-modal video { width: 100%; border-radius: 4px; background: #000; }
+                .pjt-modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+                .pjt-modal-close {
+                    background: transparent; border: none; color: var(--pjt-text-mute); font-size: 20px;
+                    cursor: pointer; padding: 4px 10px;
+                }
+                .pjt-preroll-item .pjt-preroll-actions { display: flex; gap: 6px; }
+                .pjt-mini-btn {
+                    background: var(--pjt-surface-alt); border: 1px solid var(--pjt-border);
+                    color: var(--pjt-text-dim); padding: 3px 8px; border-radius: 3px;
+                    font-size: 10px; font-family: var(--pjt-mono); cursor: pointer;
+                    text-transform: uppercase; letter-spacing: .04em;
+                }
+                .pjt-mini-btn:hover { color: var(--pjt-text); border-color: var(--pjt-accent); }
+
+                .pjt-folder-row, .pjt-rule-row {
+                    display: flex; gap: 8px; align-items: center;
+                    background: var(--pjt-surface-alt); border: 1px solid var(--pjt-border);
+                    padding: 8px 10px; border-radius: 4px;
+                }
+                .pjt-folder-row input, .pjt-rule-row input, .pjt-rule-row select {
+                    flex: 1; min-width: 80px; background: var(--pjt-bg);
+                    border: 1px solid var(--pjt-border-hot); color: var(--pjt-text);
+                    padding: 6px 8px; border-radius: 3px; font-family: var(--pjt-mono);
+                    font-size: 11px;
+                }
+                .pjt-user-chip {
+                    display: inline-flex; align-items: center; gap: 6px;
+                    background: var(--pjt-surface-alt); border: 1px solid var(--pjt-border);
+                    padding: 4px 10px; border-radius: 99px; font-size: 12px;
+                    cursor: pointer; user-select: none;
+                }
+                .pjt-user-chip.pjt-active { border-color: var(--pjt-accent); color: var(--pjt-text); background: rgba(229,9,20,.1); }
+
+                .pjt-validation-ok { color: var(--pjt-success); }
+                .pjt-validation-bad { color: var(--pjt-warn); }
             </style>
 
             <div id="pjt-root" class="pjt-corner">
 
                 <div class="pjt-header">
                     <h1>Projectionist</h1>
-                    <span class="pjt-version">v0.1.0</span>
+                    <span class="pjt-version">v1.0.0</span>
                 </div>
                 <div class="pjt-tagline">
                     Plays preroll videos before movies and episodes. Folder-based — no Jellyfin library required.
@@ -327,7 +375,10 @@
 
                     <div class="pjt-row">
                         <label class="pjt-label" for="pjt-folder">Preroll folder path</label>
-                        <input class="pjt-input" id="pjt-folder" placeholder="/media/skhynix1tb/jellyfinpreroll" />
+                        <div style="display:flex; gap:8px;">
+                            <input class="pjt-input" id="pjt-folder" placeholder="/path/to/your/prerolls" style="flex:1;" />
+                            <button type="button" class="pjt-btn pjt-btn-primary" id="pjt-save-folder" style="white-space:nowrap; padding:0 16px;">Save path</button>
+                        </div>
                         <div class="pjt-folder-status" id="pjt-folder-status"></div>
                     </div>
 
@@ -359,6 +410,23 @@
                     <div style="margin-top:12px; display:flex; gap:8px;">
                         <button type="button" class="pjt-btn" id="pjt-rescan">Rescan folder</button>
                         <button type="button" class="pjt-btn" id="pjt-preview">Preview pick</button>
+                    </div>
+                </div>
+
+                <div class="pjt-divider-label">Internal Library</div>
+
+                <div class="pjt-card">
+                    <h2>Hidden Jellyfin library</h2>
+                    <div class="pjt-section-hint">
+                        Jellyfin's player only streams files that are registered as library items. Projectionist creates a library called <strong>Projectionist Prerolls</strong> at your folder, hides it from every user's home screen via their policy, and uses it internally to serve preroll playback. You should never see it in the UI.
+                    </div>
+
+                    <div class="pjt-folder-status" id="pjt-lib-status" style="margin-top:8px;"></div>
+
+                    <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap;">
+                        <button type="button" class="pjt-btn pjt-btn-primary" id="pjt-lib-setup">Set up library</button>
+                        <button type="button" class="pjt-btn" id="pjt-lib-refresh">Refresh status</button>
+                        <button type="button" class="pjt-btn" id="pjt-lib-remove" style="margin-left:auto; opacity:.7;">Remove library</button>
                     </div>
                 </div>
 
@@ -409,7 +477,9 @@
                             <select class="pjt-select" id="pjt-mode-select">
                                 <option value="0">Random</option>
                                 <option value="1">Sequential (round-robin)</option>
-                                <option value="2">Weighted (favor older files)</option>
+                                <option value="2">Weighted (sidecar-driven)</option>
+                                <option value="3">Equal rotation (every file equally often)</option>
+                                <option value="4">Recency boost (newest files 2× for first week)</option>
                             </select>
                         </div>
 
@@ -421,6 +491,112 @@
                                 <option value="2">Once per day per user</option>
                             </select>
                         </div>
+                    </div>
+                </div>
+
+                <div class="pjt-divider-label">Smart Selection</div>
+
+                <div class="pjt-card">
+                    <h2>Smart rules</h2>
+                    <div class="pjt-section-hint">Stops prerolls feeling repetitive or out of place.</div>
+
+                    <div class="pjt-checkbox-row">
+                        <input type="checkbox" id="pjt-skip-resume" />
+                        <label for="pjt-skip-resume">
+                            <span class="pjt-cb-title">Skip on resume</span>
+                            <span class="pjt-cb-hint">If you're resuming partway through, no preroll plays.</span>
+                        </label>
+                    </div>
+                    <div class="pjt-checkbox-row">
+                        <input type="checkbox" id="pjt-maturity-gated" />
+                        <label for="pjt-maturity-gated">
+                            <span class="pjt-cb-title">Maturity gating</span>
+                            <span class="pjt-cb-hint">Prerolls rated higher than the feature are excluded — your edgy preroll won't play before a kids' film.</span>
+                        </label>
+                    </div>
+
+                    <div class="pjt-row">
+                        <label class="pjt-label" for="pjt-cooldown">Cooldown per feature (hours)</label>
+                        <input class="pjt-input" id="pjt-cooldown" type="number" min="0" />
+                        <div class="pjt-hint">Don't replay the same preroll for the same movie/episode within this window. 0 = no cooldown.</div>
+                    </div>
+
+                    <div class="pjt-row">
+                        <label class="pjt-label" for="pjt-user-mode">Per-user rule</label>
+                        <select class="pjt-select" id="pjt-user-mode">
+                            <option value="0">All users</option>
+                            <option value="1">Only selected users</option>
+                            <option value="2">All except selected users</option>
+                        </select>
+                    </div>
+                    <div class="pjt-row">
+                        <div id="pjt-user-list" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+                    </div>
+                </div>
+
+                <div class="pjt-divider-label">Advanced</div>
+
+                <div class="pjt-card">
+                    <h2>Multiple folders</h2>
+                    <div class="pjt-section-hint">Add additional preroll folders. Each can have default tags so library rules can target them.</div>
+                    <div id="pjt-folders-list" style="display:flex;flex-direction:column;gap:8px;"></div>
+                    <div style="margin-top:12px;">
+                        <button type="button" class="pjt-btn" id="pjt-add-folder">+ Add folder</button>
+                    </div>
+                </div>
+
+                <div class="pjt-card">
+                    <h2>Library rules</h2>
+                    <div class="pjt-section-hint">Match a Jellyfin library or content type to specific preroll tags. First matching rule wins.</div>
+                    <div id="pjt-rules-list" style="display:flex;flex-direction:column;gap:8px;"></div>
+                    <div style="margin-top:12px;">
+                        <button type="button" class="pjt-btn" id="pjt-add-rule">+ Add rule</button>
+                    </div>
+                </div>
+
+                <div class="pjt-card">
+                    <h2>Series-specific prerolls</h2>
+                    <div class="pjt-checkbox-row">
+                        <input type="checkbox" id="pjt-series-enabled" />
+                        <label for="pjt-series-enabled">
+                            <span class="pjt-cb-title">Use per-series prerolls when available</span>
+                            <span class="pjt-cb-hint">Drop a video file in a series folder named below — it'll override the global preroll for that show.</span>
+                        </label>
+                    </div>
+                    <div class="pjt-row">
+                        <label class="pjt-label" for="pjt-series-name">Series preroll filename (without extension)</label>
+                        <input class="pjt-input" id="pjt-series-name" placeholder="theme-preroll" />
+                    </div>
+                </div>
+
+                <div class="pjt-card">
+                    <h2>Trailer mode</h2>
+                    <div class="pjt-checkbox-row">
+                        <input type="checkbox" id="pjt-trailer-enabled" />
+                        <label for="pjt-trailer-enabled">
+                            <span class="pjt-cb-title">Chain local trailers before features</span>
+                            <span class="pjt-cb-hint">"And now our feature presentation." Pulls from the feature's local trailers.</span>
+                        </label>
+                    </div>
+                    <div class="pjt-row">
+                        <label class="pjt-label" for="pjt-trailer-count">Trailers per playback</label>
+                        <input class="pjt-input" id="pjt-trailer-count" type="number" min="0" max="5" />
+                    </div>
+                </div>
+
+                <div class="pjt-card">
+                    <h2>Skippable prerolls</h2>
+                    <div class="pjt-checkbox-row">
+                        <input type="checkbox" id="pjt-skip-enabled" />
+                        <label for="pjt-skip-enabled">
+                            <span class="pjt-cb-title">Show a skip button during prerolls</span>
+                            <span class="pjt-cb-hint">Appears in the lower-right of the player.</span>
+                        </label>
+                    </div>
+                    <div class="pjt-row">
+                        <label class="pjt-label" for="pjt-skip-after">Show skip button after (seconds)</label>
+                        <input class="pjt-input" id="pjt-skip-after" type="number" min="0" />
+                        <div class="pjt-hint">0 = available immediately.</div>
                     </div>
                 </div>
 
@@ -443,6 +619,42 @@
                     </div>
                 </div>
 
+                <div class="pjt-divider-label">Stats</div>
+
+                <div class="pjt-card">
+                    <h2>Playback stats</h2>
+                    <div class="pjt-stat-row">
+                        <div class="pjt-stat">
+                            <div class="pjt-stat-num" id="pjt-stats-total">—</div>
+                            <div class="pjt-stat-label">Total plays</div>
+                        </div>
+                        <div class="pjt-stat">
+                            <div class="pjt-stat-num" id="pjt-stats-files">—</div>
+                            <div class="pjt-stat-label">Distinct files</div>
+                        </div>
+                        <div class="pjt-stat">
+                            <div class="pjt-stat-num" id="pjt-stats-users">—</div>
+                            <div class="pjt-stat-label">Users</div>
+                        </div>
+                    </div>
+                    <div class="pjt-prerolls-list" id="pjt-stats-list" style="max-height:240px;">
+                        <div class="pjt-empty">No plays recorded yet.</div>
+                    </div>
+                    <div style="margin-top:12px; display:flex; gap:8px;">
+                        <button type="button" class="pjt-btn" id="pjt-stats-refresh">Refresh</button>
+                        <button type="button" class="pjt-btn" id="pjt-stats-reset" style="opacity:.7;">Reset stats</button>
+                    </div>
+                </div>
+
+                <div class="pjt-divider-label">Validation</div>
+                <div class="pjt-card" id="pjt-validation-card">
+                    <h2>Configuration check</h2>
+                    <div id="pjt-validation-output" style="font-family:var(--pjt-mono);font-size:12px;line-height:1.6;"></div>
+                    <div style="margin-top:12px;">
+                        <button type="button" class="pjt-btn" id="pjt-validate">Re-check</button>
+                    </div>
+                </div>
+
                 <div class="pjt-actions">
                     <button type="button" class="pjt-btn pjt-btn-primary" id="pjt-save">Save</button>
                     <button type="button" class="pjt-btn" id="pjt-reload">Discard changes</button>
@@ -450,6 +662,16 @@
             </div>
 
             <div class="pjt-toast" id="pjt-toast"></div>
+
+            <div class="pjt-modal-overlay" id="pjt-modal-overlay">
+                <div class="pjt-modal">
+                    <div class="pjt-modal-header">
+                        <h2 style="margin:0;font-size:16px;" id="pjt-modal-title">Preview</h2>
+                        <button type="button" class="pjt-modal-close" id="pjt-modal-close">×</button>
+                    </div>
+                    <video id="pjt-modal-video" controls preload="metadata"></video>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -457,16 +679,26 @@
     (function() {
         'use strict';
 
-        const PluginConfig = {
-            pluginUniqueId: 'a51f9a52-7c3b-4b89-9f10-4c8e2b3d1a5e',
+        var PluginConfig = {
+            pluginUniqueId: 'a51f9a52-7c3b-4b89-9f10-4c8e2b3d1a5e'
         };
 
         function $(id) { return document.getElementById(id); }
 
+        // Case-insensitive property accessor — Jellyfin's plugin config endpoint
+        // returns camelCase JSON but our C# class is PascalCase. Read either.
+        function pick(obj, name, fallback) {
+            if (obj == null) return fallback;
+            if (obj[name] !== undefined) return obj[name];
+            var lower = name.charAt(0).toLowerCase() + name.slice(1);
+            if (obj[lower] !== undefined) return obj[lower];
+            return fallback;
+        }
+
         function fmtBytes(b) {
             if (!b || b < 1024) return (b || 0) + ' B';
-            const units = ['KB','MB','GB','TB'];
-            let v = b / 1024, i = 0;
+            var units = ['KB','MB','GB','TB'];
+            var v = b / 1024, i = 0;
             while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
             return v.toFixed(1) + ' ' + units[i];
         }
@@ -475,38 +707,281 @@
             return ['RND','SEQ','WGT'][n] || 'RND';
         }
 
+        // Accept either integer (0,1,2) OR string enum name ("Random","Sequential",...)
+        function parseEnum(val, names) {
+            if (val == null) return 0;
+            if (typeof val === 'number') return val;
+            var s = String(val);
+            var n = parseInt(s, 10);
+            if (!isNaN(n) && /^-?\d+$/.test(s)) return n;
+            var idx = names.indexOf(s);
+            return idx >= 0 ? idx : 0;
+        }
+
         function toast(msg, error) {
-            const el = $('pjt-toast');
+            var el = $('pjt-toast');
             el.textContent = msg;
             el.classList.toggle('pjt-error', !!error);
             el.classList.add('pjt-show');
-            setTimeout(() => el.classList.remove('pjt-show'), 2400);
+            setTimeout(function() { el.classList.remove('pjt-show'); }, 2400);
         }
 
         function api(path, opts) {
-            return ApiClient.fetch({
+            // Don't blindly require JSON — some endpoints return 204 No Content and
+            // requesting dataType:'json' on an empty body rejects with a parse error
+            // even though the server succeeded. Pass expectJson:false for void endpoints.
+            var expectJson = !(opts && opts.expectJson === false);
+            var req = {
                 url: ApiClient.getUrl('Plugins/Projectionist/' + path),
                 type: (opts && opts.method) || 'GET',
                 contentType: 'application/json',
-                dataType: 'json',
-                data: opts && opts.body ? JSON.stringify(opts.body) : undefined,
+                data: opts && opts.body ? JSON.stringify(opts.body) : undefined
+            };
+            if (expectJson) req.dataType = 'json';
+            return ApiClient.fetch(req);
+        }
+
+        // ----- New v0.2 state + helpers -----
+        var state = {
+            users: [],            // [{Id, Name}]
+            selectedUserIds: [],
+            folders: [],          // [{Path, Name, DefaultTags:[]}]
+            rules: [],            // [{LibraryName, ItemType, RequireTags:[], ExcludeTags:[], Disabled}]
+        };
+
+        function renderUsers() {
+            var container = $('pjt-user-list');
+            if (!container) return;
+            if (!state.users.length) {
+                container.innerHTML = '<span style="color:var(--pjt-text-mute);font-size:11px;">Loading users…</span>';
+                return;
+            }
+            var html = state.users.map(function(u) {
+                var active = state.selectedUserIds.indexOf(u.Id) >= 0;
+                return '<span class="pjt-user-chip ' + (active ? 'pjt-active' : '') + '" data-uid="' + escapeHtml(u.Id) + '">'
+                     + escapeHtml(u.Name) + '</span>';
+            }).join('');
+            container.innerHTML = html;
+            container.querySelectorAll('.pjt-user-chip').forEach(function(el) {
+                el.addEventListener('click', function() {
+                    var uid = el.getAttribute('data-uid');
+                    var idx = state.selectedUserIds.indexOf(uid);
+                    if (idx >= 0) state.selectedUserIds.splice(idx, 1);
+                    else state.selectedUserIds.push(uid);
+                    renderUsers();
+                });
             });
         }
 
+        function fetchUsers() {
+            api('Users').then(function(users) {
+                state.users = (users || []).map(function(u) {
+                    return { Id: pick(u, 'Id', ''), Name: pick(u, 'Name', '?') };
+                });
+                renderUsers();
+            }).catch(function() {});
+        }
+
+        function renderFolders() {
+            var container = $('pjt-folders-list');
+            if (!container) return;
+            if (!state.folders.length) {
+                container.innerHTML = '<span style="color:var(--pjt-text-mute);font-size:12px;">No additional folders. The main folder above is always used.</span>';
+                return;
+            }
+            container.innerHTML = '';
+            state.folders.forEach(function(f, i) {
+                var row = document.createElement('div');
+                row.className = 'pjt-folder-row';
+                row.innerHTML =
+                    '<input type="text" placeholder="/path/to/folder" value="' + escapeHtml(f.Path || '') + '" data-i="' + i + '" data-k="Path" />'
+                  + '<input type="text" placeholder="Name (optional)" value="' + escapeHtml(f.Name || '') + '" data-i="' + i + '" data-k="Name" style="max-width:140px;" />'
+                  + '<input type="text" placeholder="tags,csv" value="' + escapeHtml((f.DefaultTags || []).join(',')) + '" data-i="' + i + '" data-k="DefaultTags" style="max-width:140px;" />'
+                  + '<button type="button" class="pjt-mini-btn" data-rm="' + i + '">Remove</button>';
+                container.appendChild(row);
+            });
+            container.querySelectorAll('input').forEach(function(inp) {
+                inp.addEventListener('input', function() {
+                    var i = parseInt(inp.getAttribute('data-i'), 10);
+                    var k = inp.getAttribute('data-k');
+                    if (!state.folders[i]) return;
+                    if (k === 'DefaultTags') {
+                        state.folders[i].DefaultTags = inp.value.split(',').map(function(s){return s.trim();}).filter(Boolean);
+                    } else {
+                        state.folders[i][k] = inp.value;
+                    }
+                });
+            });
+            container.querySelectorAll('button[data-rm]').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    state.folders.splice(parseInt(btn.getAttribute('data-rm'), 10), 1);
+                    renderFolders();
+                });
+            });
+        }
+
+        function addFolder() {
+            state.folders.push({ Path: '', Name: '', DefaultTags: [] });
+            renderFolders();
+        }
+
+        function renderRules() {
+            var container = $('pjt-rules-list');
+            if (!container) return;
+            if (!state.rules.length) {
+                container.innerHTML = '<span style="color:var(--pjt-text-mute);font-size:12px;">No library rules. Default selection rules apply to all features.</span>';
+                return;
+            }
+            container.innerHTML = '';
+            state.rules.forEach(function(r, i) {
+                var row = document.createElement('div');
+                row.className = 'pjt-rule-row';
+                row.innerHTML =
+                    '<input type="text" placeholder="Library name" value="' + escapeHtml(r.LibraryName || '') + '" data-i="' + i + '" data-k="LibraryName" />'
+                  + '<select data-i="' + i + '" data-k="ItemType">'
+                  + '<option value="">Any type</option>'
+                  + '<option value="Movie"' + (r.ItemType === 'Movie' ? ' selected' : '') + '>Movie</option>'
+                  + '<option value="Episode"' + (r.ItemType === 'Episode' ? ' selected' : '') + '>Episode</option>'
+                  + '<option value="MusicVideo"' + (r.ItemType === 'MusicVideo' ? ' selected' : '') + '>Music video</option>'
+                  + '</select>'
+                  + '<input type="text" placeholder="require: tag,tag" value="' + escapeHtml((r.RequireTags || []).join(',')) + '" data-i="' + i + '" data-k="RequireTags" style="max-width:140px;" />'
+                  + '<input type="text" placeholder="exclude: tag,tag" value="' + escapeHtml((r.ExcludeTags || []).join(',')) + '" data-i="' + i + '" data-k="ExcludeTags" style="max-width:140px;" />'
+                  + '<label style="font-size:11px;color:var(--pjt-text-mute);display:flex;align-items:center;gap:4px;"><input type="checkbox" data-i="' + i + '" data-k="Disabled" ' + (r.Disabled ? 'checked' : '') + ' />off</label>'
+                  + '<button type="button" class="pjt-mini-btn" data-rm="' + i + '">Remove</button>';
+                container.appendChild(row);
+            });
+            container.querySelectorAll('input,select').forEach(function(inp) {
+                var ev = inp.type === 'checkbox' ? 'change' : 'input';
+                inp.addEventListener(ev, function() {
+                    var i = parseInt(inp.getAttribute('data-i'), 10);
+                    var k = inp.getAttribute('data-k');
+                    if (!state.rules[i]) return;
+                    if (inp.type === 'checkbox') state.rules[i][k] = inp.checked;
+                    else if (k === 'RequireTags' || k === 'ExcludeTags')
+                        state.rules[i][k] = inp.value.split(',').map(function(s){return s.trim();}).filter(Boolean);
+                    else state.rules[i][k] = inp.value;
+                });
+            });
+            container.querySelectorAll('button[data-rm]').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    state.rules.splice(parseInt(btn.getAttribute('data-rm'), 10), 1);
+                    renderRules();
+                });
+            });
+        }
+
+        function addRule() {
+            state.rules.push({ LibraryName: '', ItemType: '', RequireTags: [], ExcludeTags: [], Disabled: false });
+            renderRules();
+        }
+
+        function refreshStats() {
+            api('Stats').then(function(s) {
+                if (!s) return;
+                var total = pick(s, 'TotalPlays', 0);
+                var files = pick(s, 'Files', []) || [];
+                var users = pick(s, 'Users', []) || [];
+                $('pjt-stats-total').textContent = total;
+                $('pjt-stats-files').textContent = files.length;
+                $('pjt-stats-users').textContent = users.length;
+                var list = $('pjt-stats-list');
+                if (files.length === 0) {
+                    list.innerHTML = '<div class="pjt-empty">No plays recorded yet.</div>';
+                    return;
+                }
+                var html = '';
+                for (var i = 0; i < Math.min(50, files.length); i++) {
+                    var f = files[i];
+                    html += '<div class="pjt-preroll-item">'
+                          +   '<div class="pjt-preroll-name">' + escapeHtml(pick(f,'FileName','')) + '</div>'
+                          +   '<div class="pjt-preroll-meta">' + pick(f,'PlayCount',0) + ' plays</div>'
+                          +   '<div class="pjt-preroll-meta">' + new Date(pick(f,'LastPlayedUtc',null)).toLocaleString() + '</div>'
+                          + '</div>';
+                }
+                list.innerHTML = html;
+            }).catch(function() {});
+        }
+
+        function resetStats() {
+            if (!confirm('Reset all stats counters? This is irreversible.')) return;
+            api('Stats/Reset', { method: 'POST', expectJson: false }).then(function() {
+                toast('Stats reset');
+                refreshStats();
+            }).catch(function() { toast('Reset failed', true); });
+        }
+
+        function runValidation() {
+            api('Validate').then(function(res) {
+                if (!res) return;
+                var ok = pick(res, 'Ok', false);
+                var problems = pick(res, 'Problems', []) || [];
+                var html = '';
+                if (ok) {
+                    html = '<div class="pjt-validation-ok">✓ All checks passed</div>';
+                } else {
+                    html = '<div class="pjt-validation-bad">' + problems.length + ' issue(s):</div><ul style="margin:6px 0 0 18px;padding:0;">';
+                    problems.forEach(function(p) {
+                        html += '<li class="pjt-validation-bad" style="margin:4px 0;">' + escapeHtml(p) + '</li>';
+                    });
+                    html += '</ul>';
+                }
+                $('pjt-validation-output').innerHTML = html;
+            }).catch(function() {
+                $('pjt-validation-output').innerHTML = '<div class="pjt-validation-bad">Could not run validation.</div>';
+            });
+        }
+
+        function openPreview(fileName) {
+            var v = $('pjt-modal-video');
+            v.src = ApiClient.getUrl('Plugins/Projectionist/Preview/' + encodeURIComponent(fileName));
+            $('pjt-modal-title').textContent = fileName;
+            $('pjt-modal-overlay').classList.add('pjt-show');
+            try { v.play(); } catch (_) {}
+        }
+        function closePreview() {
+            var v = $('pjt-modal-video');
+            try { v.pause(); } catch (_) {}
+            v.removeAttribute('src');
+            v.load();
+            $('pjt-modal-overlay').classList.remove('pjt-show');
+        }
+
         function loadConfig() {
-            ApiClient.getPluginConfiguration(PluginConfig.pluginUniqueId).then(cfg => {
-                $('pjt-folder').value = cfg.PrerollFolderPath || '';
-                $('pjt-extensions').value = cfg.AllowedExtensions || '.mp4,.mkv,.mov,.webm,.avi,.m4v';
-                $('pjt-en-movies').checked = !!cfg.EnableForMovies;
-                $('pjt-en-episodes').checked = !!cfg.EnableForEpisodes;
-                $('pjt-en-musicvids').checked = !!cfg.EnableForMusicVideos;
-                $('pjt-count').value = cfg.PrerollCount ?? 1;
-                $('pjt-mode-select').value = String(cfg.SelectionMode ?? 0);
-                $('pjt-session-select').value = String(cfg.SessionMode ?? 0);
-                $('pjt-min-feature').value = cfg.MinFeatureRuntimeSeconds ?? 0;
-                $('pjt-max-preroll').value = cfg.MaxPrerollDurationSeconds ?? 0;
+            ApiClient.getPluginConfiguration(PluginConfig.pluginUniqueId).then(function(cfg) {
+                $('pjt-folder').value = pick(cfg, 'PrerollFolderPath', '') || '';
+                $('pjt-extensions').value = pick(cfg, 'AllowedExtensions', '') || '.mp4,.mkv,.mov,.webm,.avi,.m4v';
+                $('pjt-en-movies').checked = !!pick(cfg, 'EnableForMovies', true);
+                $('pjt-en-episodes').checked = !!pick(cfg, 'EnableForEpisodes', true);
+                $('pjt-en-musicvids').checked = !!pick(cfg, 'EnableForMusicVideos', false);
+                $('pjt-count').value = pick(cfg, 'PrerollCount', 1);
+                $('pjt-mode-select').value = String(parseEnum(pick(cfg, 'SelectionMode', 0), ['Random','Sequential','Weighted','EqualRotation','RecencyBoost']));
+                $('pjt-session-select').value = String(parseEnum(pick(cfg, 'SessionMode', 0), ['EveryPlayback','FirstOfSession','OncePerDay','FirstOfBinge']));
+                $('pjt-min-feature').value = pick(cfg, 'MinFeatureRuntimeSeconds', 0);
+                $('pjt-max-preroll').value = pick(cfg, 'MaxPrerollDurationSeconds', 0);
+                // Smart selection
+                $('pjt-skip-resume').checked = !!pick(cfg, 'SkipOnResume', true);
+                $('pjt-maturity-gated').checked = !!pick(cfg, 'MaturityGated', true);
+                $('pjt-cooldown').value = pick(cfg, 'CooldownHoursPerItem', 12);
+                $('pjt-user-mode').value = String(parseEnum(pick(cfg, 'UserMode', 0), ['AllUsers','OnlyIncluded','AllExceptExcluded']));
+                state.selectedUserIds = (pick(cfg, 'UserIds', []) || []).map(String);
+                renderUsers();
+                // Folders
+                state.folders = pick(cfg, 'Folders', []) || [];
+                renderFolders();
+                // Library rules
+                state.rules = pick(cfg, 'LibraryRules', []) || [];
+                renderRules();
+                // Series + trailers + skip
+                $('pjt-series-enabled').checked = !!pick(cfg, 'EnableSeriesPrerolls', true);
+                $('pjt-series-name').value = pick(cfg, 'SeriesPrerollFileName', 'theme-preroll');
+                $('pjt-trailer-enabled').checked = !!pick(cfg, 'EnableTrailerMode', false);
+                $('pjt-trailer-count').value = pick(cfg, 'TrailerCount', 0);
+                $('pjt-skip-enabled').checked = !!pick(cfg, 'EnableSkippablePrerolls', true);
+                $('pjt-skip-after').value = pick(cfg, 'SkippableAfterSeconds', 0);
                 refreshDiscovery();
-            }).catch(err => {
+                refreshStats();
+                runValidation();
+            }).catch(function(err) {
                 console.error('[Projectionist] config load failed', err);
                 toast('Failed to load config', true);
             });
@@ -525,88 +1000,198 @@
                 MinFeatureRuntimeSeconds: parseInt($('pjt-min-feature').value, 10) || 0,
                 MaxPrerollDurationSeconds: parseInt($('pjt-max-preroll').value, 10) || 0,
                 MinPrerollDurationSeconds: 0,
+                // Smart
+                SkipOnResume: $('pjt-skip-resume').checked,
+                MaturityGated: $('pjt-maturity-gated').checked,
+                CooldownHoursPerItem: parseInt($('pjt-cooldown').value, 10) || 0,
+                UserMode: parseInt($('pjt-user-mode').value, 10) || 0,
+                UserIds: state.selectedUserIds || [],
+                // Multi-folder + rules
+                Folders: state.folders || [],
+                LibraryRules: state.rules || [],
+                // Per-series + trailers + skip
+                EnableSeriesPrerolls: $('pjt-series-enabled').checked,
+                SeriesPrerollFileName: $('pjt-series-name').value || 'theme-preroll',
+                EnableTrailerMode: $('pjt-trailer-enabled').checked,
+                TrailerCount: parseInt($('pjt-trailer-count').value, 10) || 0,
+                EnableSkippablePrerolls: $('pjt-skip-enabled').checked,
+                SkippableAfterSeconds: parseInt($('pjt-skip-after').value, 10) || 0,
+                EnableStatsTracking: true
             };
         }
 
-        function saveConfig() {
-            const cfg = gatherConfig();
-            Dashboard.showLoadingMsg();
-            ApiClient.updatePluginConfiguration(PluginConfig.pluginUniqueId, cfg)
-                .then(() => {
-                    Dashboard.hideLoadingMsg();
+        function saveConfig(silent) {
+            var cfg = gatherConfig();
+            if (!silent) Dashboard.showLoadingMsg();
+            return ApiClient.updatePluginConfiguration(PluginConfig.pluginUniqueId, cfg)
+                .then(function() {
+                    if (!silent) Dashboard.hideLoadingMsg();
                     toast('Saved');
                     refreshDiscovery();
                 })
-                .catch(err => {
-                    Dashboard.hideLoadingMsg();
+                .catch(function(err) {
+                    if (!silent) Dashboard.hideLoadingMsg();
                     console.error('[Projectionist] save failed', err);
                     toast('Save failed', true);
                 });
         }
 
         function refreshDiscovery() {
-            api('Prerolls').then(res => {
-                const status = $('pjt-folder-status');
-                if (!res.FolderPath) {
+            api('Prerolls').then(function(res) {
+                var status = $('pjt-folder-status');
+                var folder = pick(res, 'FolderPath', '');
+                var folderExists = pick(res, 'FolderExists', false);
+                var count = pick(res, 'Count', 0);
+                var totalSize = pick(res, 'TotalSizeBytes', 0);
+                var files = pick(res, 'Files', []) || [];
+                if (!folder) {
                     status.innerHTML = '<span class="pjt-status-pill pjt-pill-warn">Not set</span> <span style="color:var(--pjt-text-mute)">No preroll folder configured.</span>';
-                } else if (!res.FolderExists) {
+                } else if (!folderExists) {
                     status.innerHTML = '<span class="pjt-status-pill pjt-pill-err">Not found</span> <span style="color:var(--pjt-text-mute)">Folder does not exist or is unreadable.</span>';
                 } else {
-                    status.innerHTML = '<span class="pjt-status-pill pjt-pill-ok">OK</span> <span style="color:var(--pjt-text-mute)">' + res.FolderPath + '</span>';
+                    status.innerHTML = '<span class="pjt-status-pill pjt-pill-ok">OK</span> <span style="color:var(--pjt-text-mute)">' + escapeHtml(folder) + '</span>';
                 }
-                $('pjt-stat-count').textContent = res.Count;
-                $('pjt-stat-size').textContent = fmtBytes(res.TotalSizeBytes);
+                $('pjt-stat-count').textContent = count;
+                $('pjt-stat-size').textContent = fmtBytes(totalSize);
                 $('pjt-stat-mode').textContent = modeLabel(parseInt($('pjt-mode-select').value, 10));
-                renderList(res.Files || []);
-            }).catch(err => {
+                renderList(files);
+            }).catch(function(err) {
                 console.error('[Projectionist] list failed', err);
                 $('pjt-folder-status').innerHTML = '<span class="pjt-status-pill pjt-pill-err">Error</span>';
             });
         }
 
         function renderList(files) {
-            const list = $('pjt-prerolls-list');
-            if (!files.length) {
+            var list = $('pjt-prerolls-list');
+            if (!files || !files.length) {
                 list.innerHTML = '<div class="pjt-empty">No preroll files found in this folder.</div>';
                 return;
             }
-            list.innerHTML = files.map(f => `
-                <div class="pjt-preroll-item">
-                    <div class="pjt-preroll-name" title="${escapeHtml(f.Path)}">${escapeHtml(f.FileName)}</div>
-                    <div class="pjt-preroll-meta">${fmtBytes(f.SizeBytes)}</div>
-                    <div class="pjt-preroll-meta">${new Date(f.LastModifiedUtc).toLocaleDateString()}</div>
-                </div>
-            `).join('');
+            // String concat (NOT template literals — Jellyfin embeds the page in a way
+            // that can mangle backticks/${}). Build via DOM-safe concatenation.
+            var html = '';
+            for (var i = 0; i < files.length; i++) {
+                var f = files[i];
+                var fileName = pick(f, 'FileName', '');
+                var fullPath = pick(f, 'Path', '');
+                var sizeB = pick(f, 'SizeBytes', 0);
+                var lm = pick(f, 'LastModifiedUtc', null);
+                var dateStr = lm ? new Date(lm).toLocaleDateString() : '—';
+                var tags = (pick(f, 'Tags', []) || []).join(',');
+                html += '<div class="pjt-preroll-item">'
+                     +    '<div class="pjt-preroll-name" title="' + escapeHtml(fullPath) + '">' + escapeHtml(fileName)
+                     +      (tags ? ' <span style="color:var(--pjt-text-mute);font-size:10px;">[' + escapeHtml(tags) + ']</span>' : '')
+                     +    '</div>'
+                     +    '<div class="pjt-preroll-meta">' + fmtBytes(sizeB) + '</div>'
+                     +    '<div class="pjt-preroll-actions">'
+                     +      '<button type="button" class="pjt-mini-btn" data-pv="' + escapeHtml(fileName) + '">Preview</button>'
+                     +    '</div>'
+                     +  '</div>';
+            }
+            list.innerHTML = html;
+            list.querySelectorAll('button[data-pv]').forEach(function(btn) {
+                btn.addEventListener('click', function() { openPreview(btn.getAttribute('data-pv')); });
+            });
         }
 
         function escapeHtml(s) {
-            return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+            return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+                return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+            });
         }
 
         function rescan() {
-            api('Rescan', { method: 'POST' }).then(() => {
+            api('Rescan', { method: 'POST', expectJson: false }).then(function() {
                 toast('Rescanned');
                 refreshDiscovery();
-            }).catch(() => toast('Rescan failed', true));
+            }).catch(function() { toast('Rescan failed', true); });
         }
 
         function preview() {
-            api('Preview').then(picks => {
-                if (!picks.length) {
+            api('Preview').then(function(picks) {
+                if (!picks || !picks.length) {
                     toast('No prerolls available to pick', true);
                     return;
                 }
-                const names = picks.map(p => p.FileName).join(' → ');
+                var names = picks.map(function(p) { return pick(p, 'FileName', '?'); }).join(' → ');
                 toast('Would play: ' + names);
-            }).catch(() => toast('Preview failed', true));
+            }).catch(function() { toast('Preview failed', true); });
         }
 
-        document.querySelector('#ProjectionistConfigPage').addEventListener('pageshow', loadConfig);
-        $('pjt-save').addEventListener('click', saveConfig);
+        function refreshLibraryStatus() {
+            var elt = $('pjt-lib-status');
+            if (!elt) return;
+            api('LibraryStatus').then(function(s) {
+                var libExists = pick(s, 'LibraryExists', false);
+                var libMatches = pick(s, 'LibraryMatchesFolder', false);
+                var folderOk = pick(s, 'ConfiguredFolderExists', false);
+                var locs = pick(s, 'LibraryLocations', []) || [];
+                var html = '';
+                if (!folderOk) {
+                    html = '<span class="pjt-status-pill pjt-pill-warn">No folder</span> '
+                         + '<span style="color:var(--pjt-text-mute)">Set a preroll folder above first.</span>';
+                } else if (libExists && libMatches) {
+                    html = '<span class="pjt-status-pill pjt-pill-ok">Library OK</span> '
+                         + '<span style="color:var(--pjt-text-mute)">Hidden library is set up at ' + escapeHtml(locs.join(', ')) + '. Prerolls will play.</span>';
+                } else if (libExists && !libMatches) {
+                    html = '<span class="pjt-status-pill pjt-pill-warn">Path mismatch</span> '
+                         + '<span style="color:var(--pjt-text-mute)">Hidden library exists at ' + escapeHtml(locs.join(', ')) + ' but your folder is different. Click "Set up library" to fix.</span>';
+                } else {
+                    html = '<span class="pjt-status-pill pjt-pill-err">Not set up</span> '
+                         + '<span style="color:var(--pjt-text-mute)">No hidden library yet — prerolls won\'t actually play. Click "Set up library" below.</span>';
+                }
+                elt.innerHTML = html;
+            }).catch(function(err) {
+                console.error('[Projectionist] library status failed', err);
+                elt.innerHTML = '<span class="pjt-status-pill pjt-pill-err">Error</span>';
+            });
+        }
+
+        function setupLibrary() {
+            Dashboard.showLoadingMsg();
+            api('SetupLibrary', { method: 'POST' }).then(function() {
+                Dashboard.hideLoadingMsg();
+                toast('Library set up. Scanning…');
+                setTimeout(refreshLibraryStatus, 1500);
+            }).catch(function(err) {
+                Dashboard.hideLoadingMsg();
+                console.error('[Projectionist] setup failed', err);
+                toast('Library setup failed', true);
+            });
+        }
+
+        function removeLibrary() {
+            if (!confirm('Remove the hidden Projectionist library? Prerolls will stop playing until you set it up again.')) return;
+            api('RemoveLibrary', { method: 'POST', expectJson: false }).then(function() {
+                toast('Library removed');
+                refreshLibraryStatus();
+            }).catch(function() { toast('Remove failed', true); });
+        }
+
+        var pageEl = document.querySelector('#ProjectionistConfigPage');
+        if (pageEl) pageEl.addEventListener('pageshow', function() {
+            fetchUsers(); loadConfig(); refreshLibraryStatus(); refreshStats(); runValidation();
+        });
+        // also try eagerly so opening fresh works
+        fetchUsers();
+        $('pjt-add-folder').addEventListener('click', addFolder);
+        $('pjt-add-rule').addEventListener('click', addRule);
+        $('pjt-stats-refresh').addEventListener('click', refreshStats);
+        $('pjt-stats-reset').addEventListener('click', resetStats);
+        $('pjt-validate').addEventListener('click', runValidation);
+        $('pjt-modal-close').addEventListener('click', closePreview);
+        $('pjt-modal-overlay').addEventListener('click', function(e) {
+            if (e.target.id === 'pjt-modal-overlay') closePreview();
+        });
+        $('pjt-save').addEventListener('click', function() { saveConfig(false); setTimeout(refreshLibraryStatus, 1500); });
+        $('pjt-save-folder').addEventListener('click', function() { saveConfig(false); setTimeout(refreshLibraryStatus, 1500); });
         $('pjt-reload').addEventListener('click', loadConfig);
         $('pjt-rescan').addEventListener('click', rescan);
         $('pjt-preview').addEventListener('click', preview);
-        $('pjt-mode-select').addEventListener('change', () => {
+        $('pjt-lib-setup').addEventListener('click', setupLibrary);
+        $('pjt-lib-refresh').addEventListener('click', refreshLibraryStatus);
+        $('pjt-lib-remove').addEventListener('click', removeLibrary);
+        $('pjt-mode-select').addEventListener('change', function() {
             $('pjt-stat-mode').textContent = modeLabel(parseInt($('pjt-mode-select').value, 10));
         });
         // attempt initial load even without pageshow

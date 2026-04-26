@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using MediaBrowser.Model.Plugins;
 
 namespace Jellyfin.Plugin.Projectionist.Configuration;
@@ -7,6 +9,8 @@ public enum SelectionMode
     Random = 0,
     Sequential = 1,
     Weighted = 2,
+    EqualRotation = 3,
+    RecencyBoost = 4,
 }
 
 public enum SessionMode
@@ -14,6 +18,37 @@ public enum SessionMode
     EveryPlayback = 0,
     FirstOfSession = 1,
     OncePerDay = 2,
+    FirstOfBinge = 3,
+}
+
+public enum UserMode
+{
+    AllUsers = 0,
+    OnlyIncluded = 1,
+    AllExceptExcluded = 2,
+}
+
+public sealed class PrerollFolder
+{
+    public string Path { get; set; } = string.Empty;
+    /// <summary>Optional friendly name for the folder shown in UI.</summary>
+    public string Name { get; set; } = string.Empty;
+    /// <summary>Tags applied to every preroll under this folder unless its sidecar overrides.</summary>
+    public List<string> DefaultTags { get; set; } = new();
+}
+
+public sealed class LibraryRule
+{
+    /// <summary>Jellyfin library name to match (case-insensitive). Empty matches any.</summary>
+    public string LibraryName { get; set; } = string.Empty;
+    /// <summary>Item type filter: Movie / Episode / MusicVideo (empty = any).</summary>
+    public string ItemType { get; set; } = string.Empty;
+    /// <summary>Tags required on the preroll to be eligible. Empty = any.</summary>
+    public List<string> RequireTags { get; set; } = new();
+    /// <summary>Tags that disqualify a preroll for this rule.</summary>
+    public List<string> ExcludeTags { get; set; } = new();
+    /// <summary>If true, no preroll plays before items matching this rule.</summary>
+    public bool Disabled { get; set; }
 }
 
 public class PluginConfiguration : BasePluginConfiguration
@@ -65,4 +100,79 @@ public class PluginConfiguration : BasePluginConfiguration
     /// this runtime (seconds). Useful to avoid prerolling short clips/extras.
     /// </summary>
     public int MinFeatureRuntimeSeconds { get; set; } = 0;
+
+    // ---------- Phase A: smart selection ----------
+
+    /// <summary>
+    /// If true, items being RESUMED (PlaybackPositionTicks > 0) skip the preroll.
+    /// Default true — replaying from a resume point shouldn't trigger a brand intro.
+    /// </summary>
+    public bool SkipOnResume { get; set; } = true;
+
+    /// <summary>
+    /// Per-feature cooldown. Don't replay any preroll for the same feature within
+    /// this many hours. 0 disables.
+    /// </summary>
+    public int CooldownHoursPerItem { get; set; } = 12;
+
+    /// <summary>
+    /// If true, refuse to play a preroll whose maturity rating exceeds the feature's.
+    /// Stops the edgy preroll from playing before a kid's movie.
+    /// </summary>
+    public bool MaturityGated { get; set; } = true;
+
+    /// <summary>How user inclusion/exclusion is interpreted.</summary>
+    public UserMode UserMode { get; set; } = UserMode.AllUsers;
+
+    /// <summary>User IDs that match the UserMode rule.</summary>
+    public List<Guid> UserIds { get; set; } = new();
+
+    // ---------- Phase B: multiple folders + rules ----------
+
+    /// <summary>
+    /// Additional preroll folders beyond the legacy single folder. Each can have
+    /// its own default tags so library rules can target them.
+    /// If empty, the legacy <see cref="PrerollFolderPath"/> is used as a single folder.
+    /// </summary>
+    public List<PrerollFolder> Folders { get; set; } = new();
+
+    /// <summary>
+    /// Per-library / per-content-type rules. First matching rule wins.
+    /// </summary>
+    public List<LibraryRule> LibraryRules { get; set; } = new();
+
+    // ---------- Phase C: stats + telemetry ----------
+
+    /// <summary>If true, write per-file play counts + timestamps to plugin data dir.</summary>
+    public bool EnableStatsTracking { get; set; } = true;
+
+    // ---------- Phase D: trailers + per-series ----------
+
+    /// <summary>
+    /// If true, also pull from the feature's local trailers (when available)
+    /// instead of / in addition to the configured preroll folders.
+    /// </summary>
+    public bool EnableTrailerMode { get; set; } = false;
+
+    /// <summary>
+    /// Number of trailers (in addition to <see cref="PrerollCount"/>) to chain
+    /// before the feature when trailer mode is on. 0 = trailer mode off.
+    /// </summary>
+    public int TrailerCount { get; set; } = 0;
+
+    /// <summary>
+    /// If true, look for a `theme-preroll.mp4` (or any video file) in the series'
+    /// folder and use it as the preroll for episodes of that series, overriding
+    /// the global selection.
+    /// </summary>
+    public bool EnableSeriesPrerolls { get; set; } = true;
+
+    /// <summary>The filename (without extension) to look for in series folders.</summary>
+    public string SeriesPrerollFileName { get; set; } = "theme-preroll";
+
+    /// <summary>If true, allow the user to skip the preroll via a button in the player.</summary>
+    public bool EnableSkippablePrerolls { get; set; } = true;
+
+    /// <summary>Min seconds the preroll must play before skip is allowed. 0 = always.</summary>
+    public int SkippableAfterSeconds { get; set; } = 0;
 }

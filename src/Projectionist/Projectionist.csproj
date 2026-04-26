@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net9.0</TargetFramework>
     <RootNamespace>Jellyfin.Plugin.Projectionist</RootNamespace>
     <AssemblyName>Jellyfin.Plugin.Projectionist</AssemblyName>
     <Nullable>enable</Nullable>
@@ -9,18 +9,26 @@
     <LangVersion>latest</LangVersion>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <NoWarn>CS1591;CA1819;CA1308;CA1822;CA1031</NoWarn>
-    <Version>0.1.0</Version>
+    <Version>1.0.0</Version>
     <Authors>AhmedMedia</Authors>
     <Description>Plays preroll videos before movies and episodes in Jellyfin. Folder-based, episode-aware, with a properly designed admin UI.</Description>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Jellyfin.Controller" Version="10.10.0" />
-    <PackageReference Include="Jellyfin.Model" Version="10.10.0" />
+    <PackageReference Include="Jellyfin.Controller" Version="10.11.0" />
+    <PackageReference Include="Jellyfin.Model" Version="10.11.0" />
+    <PackageReference Include="Jellyfin.Database.Implementations" Version="10.11.0" />
   </ItemGroup>
 
   <ItemGroup>
     <EmbeddedResource Include="Configuration\configurationPage.html" />
+    <EmbeddedResource Include="Web\playback-hook.js" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="meta.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

@@ -4,14 +4,16 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using Jellyfin.Plugin.Projectionist.Configuration;
 using Jellyfin.Plugin.Projectionist.Models;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.Projectionist.Services;
 
 /// <summary>
-/// Scans the configured preroll folder for video files. Cached briefly to
-/// avoid hitting the disk on every playback request.
+/// Scans the configured preroll folders for video files. Reads optional sidecar
+/// metadata. Cached briefly to avoid hitting disk on every playback.
 /// </summary>
 public sealed class PrerollDiscoveryService
 {
@@ -19,8 +21,7 @@ public sealed class PrerollDiscoveryService
     private readonly object _cacheLock = new();
     private List<PrerollItem> _cache = new();
     private DateTime _cacheExpiresUtc = DateTime.MinValue;
-    private string _cachedFolder = string.Empty;
-    private string _cachedExtensions = string.Empty;
+    private string _cacheKey = string.Empty;
 
     private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(30);
 
@@ -29,51 +30,62 @@ public sealed class PrerollDiscoveryService
         _logger = logger;
     }
 
-    public IReadOnlyList<PrerollItem> Discover(string folderPath, string allowedExtensions)
+    /// <summary>
+    /// Discover all eligible preroll files. Aggregates the legacy single folder
+    /// AND any extra <see cref="PrerollFolder"/> entries from config.
+    /// </summary>
+    public IReadOnlyList<PrerollItem> Discover(PluginConfiguration config)
     {
-        if (string.IsNullOrWhiteSpace(folderPath))
-        {
-            return Array.Empty<PrerollItem>();
-        }
+        var folders = ResolveFolders(config);
+        if (folders.Count == 0) return Array.Empty<PrerollItem>();
 
-        if (!Directory.Exists(folderPath))
-        {
-            _logger.LogWarning("Projectionist preroll folder does not exist: {Folder}", folderPath);
-            return Array.Empty<PrerollItem>();
-        }
+        var key = string.Join("|", folders.Select(f => $"{f.Path}#{string.Join(',', f.DefaultTags)}")) +
+                  "::" + (config.AllowedExtensions ?? string.Empty);
 
         lock (_cacheLock)
         {
             var now = DateTime.UtcNow;
-            if (now < _cacheExpiresUtc &&
-                string.Equals(folderPath, _cachedFolder, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(allowedExtensions, _cachedExtensions, StringComparison.OrdinalIgnoreCase))
-            {
-                return _cache;
-            }
+            if (now < _cacheExpiresUtc && key == _cacheKey) return _cache;
 
-            var exts = ParseExtensions(allowedExtensions);
+            var exts = ParseExtensions(config.AllowedExtensions);
             var items = new List<PrerollItem>();
-            try
+
+            foreach (var folder in folders)
             {
-                foreach (var path in Directory.EnumerateFiles(folderPath, "*", SearchOption.AllDirectories))
+                if (string.IsNullOrWhiteSpace(folder.Path) || !Directory.Exists(folder.Path))
+                {
+                    _logger.LogWarning("[Projectionist] folder missing or invalid: {Folder}", folder.Path);
+                    continue;
+                }
+
+                // Try to load a folder-level prerolls.json if present
+                var folderMap = LoadFolderManifest(folder.Path);
+
+                IEnumerable<string> paths;
+                try
+                {
+                    paths = Directory.EnumerateFiles(folder.Path, "*", SearchOption.AllDirectories);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "[Projectionist] failed to enumerate {Folder}", folder.Path);
+                    continue;
+                }
+
+                foreach (var path in paths)
                 {
                     var ext = Path.GetExtension(path);
-                    if (string.IsNullOrEmpty(ext) || !exts.Contains(ext.ToLowerInvariant()))
-                    {
-                        continue;
-                    }
+                    if (string.IsNullOrEmpty(ext) || !exts.Contains(ext.ToLowerInvariant())) continue;
 
                     FileInfo info;
-                    try
-                    {
-                        info = new FileInfo(path);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogDebug(ex, "Could not stat preroll candidate {Path}", path);
-                        continue;
-                    }
+                    try { info = new FileInfo(path); }
+                    catch (Exception ex) { _logger.LogDebug(ex, "stat failed: {Path}", path); continue; }
+
+                    var meta = LoadSidecar(path) ?? folderMap.GetValueOrDefault(info.Name) ?? new PrerollMetadata();
+
+                    var tags = new HashSet<string>(meta.Tags ?? new(), StringComparer.OrdinalIgnoreCase);
+                    foreach (var t in folder.DefaultTags ?? new()) tags.Add(t);
+                    if (tags.Count == 0) tags.Add("default");
 
                     items.Add(new PrerollItem
                     {
@@ -82,28 +94,94 @@ public sealed class PrerollDiscoveryService
                         FileSizeBytes = info.Length,
                         LastModifiedUtc = info.LastWriteTimeUtc,
                         DeterministicId = DeterministicGuid(info.FullName),
+                        Tags = tags.ToList(),
+                        Weight = meta.Weight > 0 ? meta.Weight : 1.0,
+                        Rating = meta.Rating,
+                        Schedule = meta.Schedule,
+                        SourceFolder = folder.Path,
                     });
                 }
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to enumerate preroll folder {Folder}", folderPath);
-                return Array.Empty<PrerollItem>();
-            }
 
             _cache = items;
+            _cacheKey = key;
             _cacheExpiresUtc = now.Add(CacheTtl);
-            _cachedFolder = folderPath;
-            _cachedExtensions = allowedExtensions;
             return _cache;
         }
     }
 
+    /// <summary>Backwards-compatible overload for callers using only the legacy single folder.</summary>
+    public IReadOnlyList<PrerollItem> Discover(string folderPath, string allowedExtensions)
+    {
+        return Discover(new PluginConfiguration
+        {
+            PrerollFolderPath = folderPath,
+            AllowedExtensions = allowedExtensions,
+        });
+    }
+
     public void InvalidateCache()
     {
-        lock (_cacheLock)
+        lock (_cacheLock) { _cacheExpiresUtc = DateTime.MinValue; }
+    }
+
+    /// <summary>Aggregate the legacy single folder + extra Folders config entries.</summary>
+    public static List<PrerollFolder> ResolveFolders(PluginConfiguration config)
+    {
+        var list = new List<PrerollFolder>();
+        if (!string.IsNullOrWhiteSpace(config.PrerollFolderPath))
         {
-            _cacheExpiresUtc = DateTime.MinValue;
+            list.Add(new PrerollFolder
+            {
+                Path = config.PrerollFolderPath,
+                Name = "Default",
+                DefaultTags = new List<string> { "default" },
+            });
+        }
+        foreach (var f in config.Folders ?? new())
+        {
+            if (string.IsNullOrWhiteSpace(f.Path)) continue;
+            // Avoid duplicating the legacy folder
+            if (list.Any(x => string.Equals(x.Path, f.Path, StringComparison.OrdinalIgnoreCase))) continue;
+            list.Add(f);
+        }
+        return list;
+    }
+
+    private PrerollMetadata? LoadSidecar(string videoPath)
+    {
+        var sidecar = videoPath + ".json";
+        if (!File.Exists(sidecar)) return null;
+        try
+        {
+            using var stream = File.OpenRead(sidecar);
+            return JsonSerializer.Deserialize<PrerollMetadata>(stream, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[Projectionist] bad sidecar {Path}", sidecar);
+            return null;
+        }
+    }
+
+    private Dictionary<string, PrerollMetadata> LoadFolderManifest(string folderPath)
+    {
+        var manifest = Path.Combine(folderPath, "prerolls.json");
+        if (!File.Exists(manifest)) return new Dictionary<string, PrerollMetadata>();
+        try
+        {
+            using var stream = File.OpenRead(manifest);
+            var data = JsonSerializer.Deserialize<Dictionary<string, PrerollMetadata>>(stream,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            return data ?? new();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[Projectionist] bad folder manifest {Path}", manifest);
+            return new();
         }
     }
 

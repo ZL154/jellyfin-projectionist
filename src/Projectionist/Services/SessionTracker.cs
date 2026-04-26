@@ -4,7 +4,8 @@ using System.Collections.Concurrent;
 namespace Jellyfin.Plugin.Projectionist.Services;
 
 /// <summary>
-/// Tracks per-user playback state to support FirstOfSession and OncePerDay modes.
+/// Tracks per-user playback state to support FirstOfSession, OncePerDay, and
+/// FirstOfBinge modes. A "binge" is consecutive episodes of the same series.
 /// </summary>
 public sealed class SessionTracker
 {
@@ -13,24 +14,36 @@ public sealed class SessionTracker
 
     private readonly ConcurrentDictionary<Guid, DateTime> _lastPlaybackUtc = new();
     private readonly ConcurrentDictionary<Guid, DateTime> _lastPrerollUtc = new();
+    /// <summary>Per-user, per-series last episode-played timestamp. Used by FirstOfBinge.</summary>
+    private readonly ConcurrentDictionary<(Guid UserId, Guid SeriesId), DateTime> _lastEpisodeUtc = new();
 
     /// <summary>
     /// Returns true if a preroll should be played for this user given the current
-    /// session-mode rules.
+    /// session-mode rules. seriesId is non-empty only for episodes — used for
+    /// FirstOfBinge mode (don't replay during episode 2+ of same series).
     /// </summary>
-    public bool ShouldPlay(Guid userId, Configuration.SessionMode mode)
+    public bool ShouldPlay(Guid userId, Configuration.SessionMode mode, Guid seriesId = default)
     {
         var now = DateTime.UtcNow;
         var hadRecentPlayback = _lastPlaybackUtc.TryGetValue(userId, out var last) && (now - last) < SessionGap;
-        var allow = mode switch
+        return mode switch
         {
             Configuration.SessionMode.FirstOfSession => !hadRecentPlayback,
             Configuration.SessionMode.OncePerDay =>
                 !_lastPrerollUtc.TryGetValue(userId, out var lastPre) ||
                 (now - lastPre) >= TimeSpan.FromHours(20),
+            Configuration.SessionMode.FirstOfBinge =>
+                seriesId == default ||
+                !_lastEpisodeUtc.TryGetValue((userId, seriesId), out var lastEp) ||
+                (now - lastEp) >= SessionGap,
             _ => true,
         };
-        return allow;
+    }
+
+    public void RecordEpisodePlayback(Guid userId, Guid seriesId)
+    {
+        if (seriesId == default) return;
+        _lastEpisodeUtc[(userId, seriesId)] = DateTime.UtcNow;
     }
 
     /// <summary>
