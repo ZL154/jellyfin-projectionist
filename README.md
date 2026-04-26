@@ -280,11 +280,6 @@ Targets Jellyfin 10.11 ABI (`Jellyfin.Controller` 10.11.0).
 
 Movie support has zero dependencies. **Episode support** requires the [FileTransformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) plugin (any version, autodetected at runtime).
 
----
-
-## 🙋 Why "Projectionist"?
-
-Because that's the role this plugin plays — the projectionist is the person who threads the reels and decides what plays before the feature.
 
 ---
 
