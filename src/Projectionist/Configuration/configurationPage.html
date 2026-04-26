@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Projectionist</title>
+</head>
+<body>
+<div id="ProjectionistConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-select,emby-checkbox">
+    <div data-role="content">
+        <div class="content-primary">
+
+            <style>
+                /* === Projectionist custom UI styles === */
+                #pjt-root {
+                    --pjt-bg: #0c0d10;
+                    --pjt-surface: #15171d;
+                    --pjt-surface-alt: #1c1f27;
+                    --pjt-border: #262a35;
+                    --pjt-border-hot: #3a4050;
+                    --pjt-accent: #e50914;
+                    --pjt-accent-dim: #8a0810;
+                    --pjt-text: #e8eaee;
+                    --pjt-text-dim: #8a8f9c;
+                    --pjt-text-mute: #565a66;
+                    --pjt-success: #4caf50;
+                    --pjt-warn: #f5a623;
+                    --pjt-mono: 'JetBrains Mono', 'Consolas', 'SF Mono', monospace;
+                    color: var(--pjt-text);
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                    max-width: 980px;
+                    margin: 0 auto;
+                    padding: 24px 16px 80px;
+                    box-sizing: border-box;
+                }
+                #pjt-root * { box-sizing: border-box; }
+
+                .pjt-header {
+                    display: flex;
+                    align-items: baseline;
+                    justify-content: space-between;
+                    border-bottom: 1px solid var(--pjt-border);
+                    padding-bottom: 16px;
+                    margin-bottom: 24px;
+                }
+                .pjt-header h1 {
+                    margin: 0;
+                    font-size: 28px;
+                    font-weight: 600;
+                    letter-spacing: -0.01em;
+                }
+                .pjt-header .pjt-version {
+                    font-family: var(--pjt-mono);
+                    font-size: 12px;
+                    color: var(--pjt-text-mute);
+                    text-transform: uppercase;
+                    letter-spacing: 0.08em;
+                }
+                .pjt-tagline {
+                    color: var(--pjt-text-dim);
+                    font-size: 13px;
+                    margin-top: -16px;
+                    margin-bottom: 24px;
+                    padding-bottom: 16px;
+                    border-bottom: 1px solid var(--pjt-border);
+                }
+
+                .pjt-grid {
+                    display: grid;
+                    grid-template-columns: 1fr;
+                    gap: 16px;
+                }
+                @media (min-width: 760px) {
+                    .pjt-grid-2 { grid-template-columns: 1fr 1fr; }
+                }
+
+                .pjt-card {
+                    background: var(--pjt-surface);
+                    border: 1px solid var(--pjt-border);
+                    border-radius: 6px;
+                    padding: 20px;
+                }
+                .pjt-card h2 {
+                    margin: 0 0 4px 0;
+                    font-size: 16px;
+                    font-weight: 600;
+                    letter-spacing: 0.01em;
+                }
+                .pjt-card .pjt-section-hint {
+                    color: var(--pjt-text-dim);
+                    font-size: 12px;
+                    margin-bottom: 18px;
+                }
+
+                .pjt-row + .pjt-row { margin-top: 14px; }
+                .pjt-label {
+                    display: block;
+                    font-size: 13px;
+                    color: var(--pjt-text);
+                    margin-bottom: 6px;
+                    font-weight: 500;
+                }
+                .pjt-input, .pjt-select {
+                    width: 100%;
+                    background: var(--pjt-surface-alt);
+                    border: 1px solid var(--pjt-border-hot);
+                    color: var(--pjt-text);
+                    padding: 10px 12px;
+                    border-radius: 4px;
+                    font-family: var(--pjt-mono);
+                    font-size: 13px;
+                    transition: border-color .15s, background .15s;
+                }
+                .pjt-input:focus, .pjt-select:focus {
+                    outline: none;
+                    border-color: var(--pjt-accent);
+                    background: #1f2330;
+                }
+                .pjt-hint {
+                    color: var(--pjt-text-mute);
+                    font-size: 11px;
+                    margin-top: 6px;
+                    line-height: 1.4;
+                }
+
+                .pjt-checkbox-row {
+                    display: flex;
+                    align-items: flex-start;
+                    gap: 10px;
+                    padding: 8px 0;
+                }
+                .pjt-checkbox-row input[type=checkbox] {
+                    margin-top: 3px;
+                    accent-color: var(--pjt-accent);
+                    width: 16px;
+                    height: 16px;
+                }
+                .pjt-checkbox-row label {
+                    cursor: pointer;
+                    user-select: none;
+                    flex: 1;
+                }
+                .pjt-checkbox-row label .pjt-cb-title {
+                    font-size: 13px;
+                    color: var(--pjt-text);
+                    display: block;
+                }
+                .pjt-checkbox-row label .pjt-cb-hint {
+                    font-size: 11px;
+                    color: var(--pjt-text-mute);
+                    margin-top: 2px;
+                }
+
+                .pjt-folder-status {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    margin-top: 8px;
+                    font-family: var(--pjt-mono);
+                    font-size: 11px;
+                }
+                .pjt-status-pill {
+                    padding: 2px 8px;
+                    border-radius: 99px;
+                    font-size: 10px;
+                    font-weight: 600;
+                    letter-spacing: 0.06em;
+                    text-transform: uppercase;
+                }
+                .pjt-pill-ok { background: rgba(76,175,80,.16); color: var(--pjt-success); }
+                .pjt-pill-warn { background: rgba(245,166,35,.18); color: var(--pjt-warn); }
+                .pjt-pill-err { background: rgba(229,9,20,.18); color: var(--pjt-accent); }
+
+                .pjt-prerolls-list {
+                    margin-top: 14px;
+                    border: 1px solid var(--pjt-border);
+                    border-radius: 4px;
+                    max-height: 320px;
+                    overflow: auto;
+                    background: #0e1014;
+                }
+                .pjt-prerolls-list .pjt-empty {
+                    padding: 24px;
+                    text-align: center;
+                    color: var(--pjt-text-mute);
+                    font-size: 13px;
+                }
+                .pjt-preroll-item {
+                    display: grid;
+                    grid-template-columns: 1fr auto auto;
+                    gap: 12px;
+                    align-items: center;
+                    padding: 10px 14px;
+                    border-bottom: 1px solid var(--pjt-border);
+                    font-family: var(--pjt-mono);
+                    font-size: 12px;
+                }
+                .pjt-preroll-item:last-child { border-bottom: 0; }
+                .pjt-preroll-name {
+                    color: var(--pjt-text);
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                }
+                .pjt-preroll-meta {
+                    color: var(--pjt-text-mute);
+                    font-size: 10px;
+                    text-align: right;
+                }
+
+                .pjt-actions {
+                    display: flex;
+                    gap: 10px;
+                    margin-top: 32px;
+                    padding-top: 20px;
+                    border-top: 1px solid var(--pjt-border);
+                }
+                .pjt-btn {
+                    background: var(--pjt-surface-alt);
+                    border: 1px solid var(--pjt-border-hot);
+                    color: var(--pjt-text);
+                    padding: 10px 18px;
+                    border-radius: 4px;
+                    font-size: 13px;
+                    font-weight: 500;
+                    cursor: pointer;
+                    transition: background .15s, border-color .15s;
+                    font-family: inherit;
+                }
+                .pjt-btn:hover { background: #232735; border-color: var(--pjt-accent); }
+                .pjt-btn-primary {
+                    background: var(--pjt-accent);
+                    border-color: var(--pjt-accent);
+                    color: #fff;
+                }
+                .pjt-btn-primary:hover { background: #c4060f; border-color: #c4060f; }
+
+                .pjt-toast {
+                    position: fixed;
+                    bottom: 24px;
+                    right: 24px;
+                    background: var(--pjt-surface);
+                    border: 1px solid var(--pjt-accent);
+                    border-radius: 4px;
+                    padding: 12px 18px;
+                    color: var(--pjt-text);
+                    font-size: 13px;
+                    font-weight: 500;
+                    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+                    transform: translateX(120%);
+                    transition: transform .3s cubic-bezier(.2,.8,.2,1);
+                    z-index: 99999;
+                    font-family: inherit;
+                }
+                .pjt-toast.pjt-show { transform: translateX(0); }
+                .pjt-toast.pjt-error { border-color: var(--pjt-accent); background: rgba(229,9,20,.08); }
+
+                .pjt-stat-row {
+                    display: flex;
+                    gap: 24px;
+                    margin: 12px 0 4px;
+                }
+                .pjt-stat {
+                    flex: 1;
+                }
+                .pjt-stat-num {
+                    font-family: var(--pjt-mono);
+                    font-size: 22px;
+                    font-weight: 600;
+                    color: var(--pjt-text);
+                    letter-spacing: -0.01em;
+                }
+                .pjt-stat-label {
+                    font-size: 10px;
+                    color: var(--pjt-text-mute);
+                    text-transform: uppercase;
+                    letter-spacing: 0.08em;
+                    margin-top: 2px;
+                }
+
+                .pjt-corner {
+                    position: relative;
+                }
+                .pjt-corner::before, .pjt-corner::after {
+                    content: '';
+                    position: absolute;
+                    width: 10px;
+                    height: 10px;
+                    border-color: var(--pjt-accent);
+                    border-style: solid;
+                    border-width: 0;
+                }
+                .pjt-corner::before { top: -1px; left: -1px; border-top-width: 1px; border-left-width: 1px; }
+                .pjt-corner::after { bottom: -1px; right: -1px; border-bottom-width: 1px; border-right-width: 1px; }
+
+                .pjt-divider-label {
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                    color: var(--pjt-text-mute);
+                    font-family: var(--pjt-mono);
+                    font-size: 10px;
+                    text-transform: uppercase;
+                    letter-spacing: 0.12em;
+                    margin: 28px 0 12px;
+                }
+                .pjt-divider-label::after {
+                    content: '';
+                    flex: 1;
+                    height: 1px;
+                    background: var(--pjt-border);
+                }
+            </style>
+
+            <div id="pjt-root" class="pjt-corner">
+
+                <div class="pjt-header">
+                    <h1>Projectionist</h1>
+                    <span class="pjt-version">v0.1.0</span>
+                </div>
+                <div class="pjt-tagline">
+                    Plays preroll videos before movies and episodes. Folder-based — no Jellyfin library required.
+                </div>
+
+                <!-- ========== Source ========== -->
+                <div class="pjt-card">
+                    <h2>Source</h2>
+                    <div class="pjt-section-hint">Folder Projectionist scans for preroll video files. Read-only.</div>
+
+                    <div class="pjt-row">
+                        <label class="pjt-label" for="pjt-folder">Preroll folder path</label>
+                        <input class="pjt-input" id="pjt-folder" placeholder="/media/skhynix1tb/jellyfinpreroll" />
+                        <div class="pjt-folder-status" id="pjt-folder-status"></div>
+                    </div>
+
+                    <div class="pjt-row">
+                        <label class="pjt-label" for="pjt-extensions">Allowed file extensions</label>
+                        <input class="pjt-input" id="pjt-extensions" />
+                        <div class="pjt-hint">Comma-separated. Anything else in the folder is ignored.</div>
+                    </div>
+
+                    <div class="pjt-stat-row">
+                        <div class="pjt-stat">
+                            <div class="pjt-stat-num" id="pjt-stat-count">—</div>
+                            <div class="pjt-stat-label">Prerolls discovered</div>
+                        </div>
+                        <div class="pjt-stat">
+                            <div class="pjt-stat-num" id="pjt-stat-size">—</div>
+                            <div class="pjt-stat-label">Total size</div>
+                        </div>
+                        <div class="pjt-stat">
+                            <div class="pjt-stat-num" id="pjt-stat-mode">—</div>
+                            <div class="pjt-stat-label">Selection mode</div>
+                        </div>
+                    </div>
+
+                    <div class="pjt-prerolls-list" id="pjt-prerolls-list">
+                        <div class="pjt-empty">No prerolls scanned yet.</div>
+                    </div>
+
+                    <div style="margin-top:12px; display:flex; gap:8px;">
+                        <button type="button" class="pjt-btn" id="pjt-rescan">Rescan folder</button>
+                        <button type="button" class="pjt-btn" id="pjt-preview">Preview pick</button>
+                    </div>
+                </div>
+
+                <div class="pjt-divider-label">Playback Rules</div>
+
+                <div class="pjt-grid pjt-grid-2">
+                    <!-- ========== Triggers ========== -->
+                    <div class="pjt-card">
+                        <h2>Triggers</h2>
+                        <div class="pjt-section-hint">Which content types kick off a preroll.</div>
+
+                        <div class="pjt-checkbox-row">
+                            <input type="checkbox" id="pjt-en-movies" />
+                            <label for="pjt-en-movies">
+                                <span class="pjt-cb-title">Movies</span>
+                                <span class="pjt-cb-hint">Standard. Plays before any movie.</span>
+                            </label>
+                        </div>
+                        <div class="pjt-checkbox-row">
+                            <input type="checkbox" id="pjt-en-episodes" />
+                            <label for="pjt-en-episodes">
+                                <span class="pjt-cb-title">TV episodes</span>
+                                <span class="pjt-cb-hint">Plays before each episode. Pair with "First of session" mode to avoid binge spam.</span>
+                            </label>
+                        </div>
+                        <div class="pjt-checkbox-row">
+                            <input type="checkbox" id="pjt-en-musicvids" />
+                            <label for="pjt-en-musicvids">
+                                <span class="pjt-cb-title">Music videos</span>
+                                <span class="pjt-cb-hint">Off by default — usually unwanted.</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- ========== Selection ========== -->
+                    <div class="pjt-card">
+                        <h2>Selection</h2>
+                        <div class="pjt-section-hint">How prerolls are picked from the pool.</div>
+
+                        <div class="pjt-row">
+                            <label class="pjt-label" for="pjt-count">Number of prerolls per playback</label>
+                            <input class="pjt-input" id="pjt-count" type="number" min="0" max="10" />
+                            <div class="pjt-hint">0 disables. Above 1 chains multiple files in a row.</div>
+                        </div>
+
+                        <div class="pjt-row">
+                            <label class="pjt-label" for="pjt-mode-select">Selection mode</label>
+                            <select class="pjt-select" id="pjt-mode-select">
+                                <option value="0">Random</option>
+                                <option value="1">Sequential (round-robin)</option>
+                                <option value="2">Weighted (favor older files)</option>
+                            </select>
+                        </div>
+
+                        <div class="pjt-row">
+                            <label class="pjt-label" for="pjt-session-select">Session behaviour</label>
+                            <select class="pjt-select" id="pjt-session-select">
+                                <option value="0">Every playback</option>
+                                <option value="1">First of session (idle 20+ min triggers next)</option>
+                                <option value="2">Once per day per user</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="pjt-divider-label">Filters</div>
+
+                <div class="pjt-card">
+                    <h2>Runtime filters</h2>
+                    <div class="pjt-section-hint">Skip prerolls or features outside these duration bounds. Set 0 to disable a bound.</div>
+                    <div class="pjt-grid pjt-grid-2">
+                        <div class="pjt-row">
+                            <label class="pjt-label" for="pjt-min-feature">Min feature runtime (seconds)</label>
+                            <input class="pjt-input" id="pjt-min-feature" type="number" min="0" />
+                            <div class="pjt-hint">If the feature is shorter than this, no preroll. Useful for trailers/extras.</div>
+                        </div>
+                        <div class="pjt-row">
+                            <label class="pjt-label" for="pjt-max-preroll">Max preroll runtime (seconds)</label>
+                            <input class="pjt-input" id="pjt-max-preroll" type="number" min="0" />
+                            <div class="pjt-hint">Reserved for future filtering — not enforced yet.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="pjt-actions">
+                    <button type="button" class="pjt-btn pjt-btn-primary" id="pjt-save">Save</button>
+                    <button type="button" class="pjt-btn" id="pjt-reload">Discard changes</button>
+                </div>
+            </div>
+
+            <div class="pjt-toast" id="pjt-toast"></div>
+        </div>
+    </div>
+
+    <script type="text/javascript">
+    (function() {
+        'use strict';
+
+        const PluginConfig = {
+            pluginUniqueId: 'a51f9a52-7c3b-4b89-9f10-4c8e2b3d1a5e',
+        };
+
+        function $(id) { return document.getElementById(id); }
+
+        function fmtBytes(b) {
+            if (!b || b < 1024) return (b || 0) + ' B';
+            const units = ['KB','MB','GB','TB'];
+            let v = b / 1024, i = 0;
+            while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+            return v.toFixed(1) + ' ' + units[i];
+        }
+
+        function modeLabel(n) {
+            return ['RND','SEQ','WGT'][n] || 'RND';
+        }
+
+        function toast(msg, error) {
+            const el = $('pjt-toast');
+            el.textContent = msg;
+            el.classList.toggle('pjt-error', !!error);
+            el.classList.add('pjt-show');
+            setTimeout(() => el.classList.remove('pjt-show'), 2400);
+        }
+
+        function api(path, opts) {
+            return ApiClient.fetch({
+                url: ApiClient.getUrl('Plugins/Projectionist/' + path),
+                type: (opts && opts.method) || 'GET',
+                contentType: 'application/json',
+                dataType: 'json',
+                data: opts && opts.body ? JSON.stringify(opts.body) : undefined,
+            });
+        }
+
+        function loadConfig() {
+            ApiClient.getPluginConfiguration(PluginConfig.pluginUniqueId).then(cfg => {
+                $('pjt-folder').value = cfg.PrerollFolderPath || '';
+                $('pjt-extensions').value = cfg.AllowedExtensions || '.mp4,.mkv,.mov,.webm,.avi,.m4v';
+                $('pjt-en-movies').checked = !!cfg.EnableForMovies;
+                $('pjt-en-episodes').checked = !!cfg.EnableForEpisodes;
+                $('pjt-en-musicvids').checked = !!cfg.EnableForMusicVideos;
+                $('pjt-count').value = cfg.PrerollCount ?? 1;
+                $('pjt-mode-select').value = String(cfg.SelectionMode ?? 0);
+                $('pjt-session-select').value = String(cfg.SessionMode ?? 0);
+                $('pjt-min-feature').value = cfg.MinFeatureRuntimeSeconds ?? 0;
+                $('pjt-max-preroll').value = cfg.MaxPrerollDurationSeconds ?? 0;
+                refreshDiscovery();
+            }).catch(err => {
+                console.error('[Projectionist] config load failed', err);
+                toast('Failed to load config', true);
+            });
+        }
+
+        function gatherConfig() {
+            return {
+                PrerollFolderPath: $('pjt-folder').value.trim(),
+                AllowedExtensions: $('pjt-extensions').value.trim() || '.mp4,.mkv,.mov,.webm,.avi,.m4v',
+                EnableForMovies: $('pjt-en-movies').checked,
+                EnableForEpisodes: $('pjt-en-episodes').checked,
+                EnableForMusicVideos: $('pjt-en-musicvids').checked,
+                PrerollCount: parseInt($('pjt-count').value, 10) || 0,
+                SelectionMode: parseInt($('pjt-mode-select').value, 10) || 0,
+                SessionMode: parseInt($('pjt-session-select').value, 10) || 0,
+                MinFeatureRuntimeSeconds: parseInt($('pjt-min-feature').value, 10) || 0,
+                MaxPrerollDurationSeconds: parseInt($('pjt-max-preroll').value, 10) || 0,
+                MinPrerollDurationSeconds: 0,
+            };
+        }
+
+        function saveConfig() {
+            const cfg = gatherConfig();
+            Dashboard.showLoadingMsg();
+            ApiClient.updatePluginConfiguration(PluginConfig.pluginUniqueId, cfg)
+                .then(() => {
+                    Dashboard.hideLoadingMsg();
+                    toast('Saved');
+                    refreshDiscovery();
+                })
+                .catch(err => {
+                    Dashboard.hideLoadingMsg();
+                    console.error('[Projectionist] save failed', err);
+                    toast('Save failed', true);
+                });
+        }
+
+        function refreshDiscovery() {
+            api('Prerolls').then(res => {
+                const status = $('pjt-folder-status');
+                if (!res.FolderPath) {
+                    status.innerHTML = '<span class="pjt-status-pill pjt-pill-warn">Not set</span> <span style="color:var(--pjt-text-mute)">No preroll folder configured.</span>';
+                } else if (!res.FolderExists) {
+                    status.innerHTML = '<span class="pjt-status-pill pjt-pill-err">Not found</span> <span style="color:var(--pjt-text-mute)">Folder does not exist or is unreadable.</span>';
+                } else {
+                    status.innerHTML = '<span class="pjt-status-pill pjt-pill-ok">OK</span> <span style="color:var(--pjt-text-mute)">' + res.FolderPath + '</span>';
+                }
+                $('pjt-stat-count').textContent = res.Count;
+                $('pjt-stat-size').textContent = fmtBytes(res.TotalSizeBytes);
+                $('pjt-stat-mode').textContent = modeLabel(parseInt($('pjt-mode-select').value, 10));
+                renderList(res.Files || []);
+            }).catch(err => {
+                console.error('[Projectionist] list failed', err);
+                $('pjt-folder-status').innerHTML = '<span class="pjt-status-pill pjt-pill-err">Error</span>';
+            });
+        }
+
+        function renderList(files) {
+            const list = $('pjt-prerolls-list');
+            if (!files.length) {
+                list.innerHTML = '<div class="pjt-empty">No preroll files found in this folder.</div>';
+                return;
+            }
+            list.innerHTML = files.map(f => `
+                <div class="pjt-preroll-item">
+                    <div class="pjt-preroll-name" title="${escapeHtml(f.Path)}">${escapeHtml(f.FileName)}</div>
+                    <div class="pjt-preroll-meta">${fmtBytes(f.SizeBytes)}</div>
+                    <div class="pjt-preroll-meta">${new Date(f.LastModifiedUtc).toLocaleDateString()}</div>
+                </div>
+            `).join('');
+        }
+
+        function escapeHtml(s) {
+            return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
+
+        function rescan() {
+            api('Rescan', { method: 'POST' }).then(() => {
+                toast('Rescanned');
+                refreshDiscovery();
+            }).catch(() => toast('Rescan failed', true));
+        }
+
+        function preview() {
+            api('Preview').then(picks => {
+                if (!picks.length) {
+                    toast('No prerolls available to pick', true);
+                    return;
+                }
+                const names = picks.map(p => p.FileName).join(' → ');
+                toast('Would play: ' + names);
+            }).catch(() => toast('Preview failed', true));
+        }
+
+        document.querySelector('#ProjectionistConfigPage').addEventListener('pageshow', loadConfig);
+        $('pjt-save').addEventListener('click', saveConfig);
+        $('pjt-reload').addEventListener('click', loadConfig);
+        $('pjt-rescan').addEventListener('click', rescan);
+        $('pjt-preview').addEventListener('click', preview);
+        $('pjt-mode-select').addEventListener('change', () => {
+            $('pjt-stat-mode').textContent = modeLabel(parseInt($('pjt-mode-select').value, 10));
+        });
+        // attempt initial load even without pageshow
+        loadConfig();
+    })();
+    </script>
+</div>
+</body>
+</html>

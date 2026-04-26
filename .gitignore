@@ -1,0 +1,27 @@
+# Build output
+bin/
+obj/
+*.dll
+*.pdb
+*.exe
+
+# Packaged plugin bundles
+build-output/
+*.zip
+*.tar.gz
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Misc
+*.log
+.tmp/
