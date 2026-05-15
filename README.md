@@ -109,13 +109,11 @@ Jellyfin's player only streams files registered as library items. Projectionist 
 
 ---
 
-## 📺 Episode support (it's not trivial)
+## 📺 Episode support 
 
 Jellyfin's web/desktop/TV clients hard-code intro fetching to `Type === 'Movie'` only. Episodes never call `/Items/{id}/Intros`, so any plugin that just implements `IIntroProvider` can't do anything for episode playback.
 
 Projectionist works around this with a small JavaScript hook that monkey-patches `playbackManager.play()`. When the user plays an episode, the hook fetches `/Items/{episodeId}/Intros` itself and prepends the result to the play options. The script is injected into Jellyfin's `index.html` via two parallel paths — an in-process ASP.NET `IStartupFilter` middleware AND a registration with the FileTransformation plugin (whichever fires first wins).
-
-This is the same pattern Achievement Badges, StarTrack, and other "real" plugins use. It just works.
 
 ---
 
