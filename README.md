@@ -47,7 +47,7 @@ A Jellyfin plugin that plays preroll videos before movies **and** TV episodes. F
 - 🧠 **Smart selection.** Cooldown so you don't see the same intro on every rewatch. Maturity gating so your edgy ident doesn't play before *Bluey*. Skip-on-resume. First-of-binge for TV. Per-user rules.
 - 🎃 **Seasonal / scheduled prerolls.** Drop a `halloween.mp4` and a `xmas.mp4` next to your default — they auto-trigger on the right dates.
 - 📊 **Stats.** Per-file + per-user playback counters with a live dashboard.
-- 🎨 **Custom dark admin UI.** Not the default Jellyfin form-on-grey look. Designed end-to-end.
+- 🎨 **Custom dark admin UI.** 
 
 ---
 
