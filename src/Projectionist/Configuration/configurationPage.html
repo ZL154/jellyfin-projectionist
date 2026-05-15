@@ -98,7 +98,11 @@
                     margin-bottom: 6px;
                     font-weight: 500;
                 }
-                .pjt-input, .pjt-select {
+                #pjt-root .pjt-input,
+                #pjt-root .pjt-select,
+                #pjt-root .pjt-folder-row input,
+                #pjt-root .pjt-rule-row input,
+                #pjt-root .pjt-rule-row select {
                     width: 100%;
                     background: var(--pjt-surface-alt);
                     border: 1px solid var(--pjt-border-hot);
@@ -108,8 +112,24 @@
                     font-family: var(--pjt-mono);
                     font-size: 13px;
                     transition: border-color .15s, background .15s;
+                    appearance: auto !important;
+                    -webkit-appearance: auto !important;
+                    display: block !important;
+                    opacity: 1 !important;
+                    visibility: visible !important;
+                    pointer-events: auto !important;
+                    user-select: auto !important;
+                    min-height: 38px;
                 }
-                .pjt-input:focus, .pjt-select:focus {
+                #pjt-root .pjt-select,
+                #pjt-root .pjt-rule-row select {
+                    cursor: pointer;
+                }
+                #pjt-root .pjt-input:focus,
+                #pjt-root .pjt-select:focus,
+                #pjt-root .pjt-folder-row input:focus,
+                #pjt-root .pjt-rule-row input:focus,
+                #pjt-root .pjt-rule-row select:focus {
                     outline: none;
                     border-color: var(--pjt-accent);
                     background: #1f2330;
@@ -126,17 +146,68 @@
                     align-items: flex-start;
                     gap: 10px;
                     padding: 8px 0;
+                    position: relative;
+                    min-height: 34px;
                 }
-                .pjt-checkbox-row input[type=checkbox] {
-                    margin-top: 3px;
-                    accent-color: var(--pjt-accent);
-                    width: 16px;
-                    height: 16px;
+                #pjt-root .pjt-checkbox-row > input[type=checkbox] {
+                    position: absolute !important;
+                    left: 0 !important;
+                    top: 8px !important;
+                    z-index: 2 !important;
+                    width: 22px !important;
+                    height: 22px !important;
+                    margin: 0 !important;
+                    padding: 0 !important;
+                    opacity: 0.01 !important;
+                    display: block !important;
+                    visibility: visible !important;
+                    pointer-events: auto !important;
+                    cursor: pointer !important;
                 }
                 .pjt-checkbox-row label {
                     cursor: pointer;
                     user-select: none;
                     flex: 1;
+                    position: relative;
+                    display: block;
+                    min-height: 24px;
+                    padding-left: 34px;
+                    line-height: 1.25;
+                }
+                .pjt-checkbox-row label::before {
+                    content: '';
+                    position: absolute;
+                    left: 0;
+                    top: 0;
+                    width: 20px;
+                    height: 20px;
+                    border: 1px solid var(--pjt-border-hot);
+                    border-radius: 4px;
+                    background: #101218;
+                    box-shadow: inset 0 0 0 1px rgba(255,255,255,.02);
+                }
+                .pjt-checkbox-row label::after {
+                    content: '';
+                    position: absolute;
+                    left: 7px;
+                    top: 3px;
+                    width: 6px;
+                    height: 11px;
+                    border: solid #fff;
+                    border-width: 0 2px 2px 0;
+                    opacity: 0;
+                    transform: rotate(45deg);
+                }
+                .pjt-checkbox-row > input[type=checkbox]:checked + label::before {
+                    background: var(--pjt-accent);
+                    border-color: var(--pjt-accent);
+                }
+                .pjt-checkbox-row > input[type=checkbox]:checked + label::after {
+                    opacity: 1;
+                }
+                .pjt-checkbox-row > input[type=checkbox]:focus-visible + label::before {
+                    outline: 2px solid rgba(229,9,20,.45);
+                    outline-offset: 2px;
                 }
                 .pjt-checkbox-row label .pjt-cb-title {
                     font-size: 13px;
@@ -346,6 +417,22 @@
                     padding: 6px 8px; border-radius: 3px; font-family: var(--pjt-mono);
                     font-size: 11px;
                 }
+                #pjt-root .pjt-rule-row input[type=checkbox] {
+                    appearance: auto !important;
+                    -webkit-appearance: auto !important;
+                    display: inline-block !important;
+                    position: static !important;
+                    opacity: 1 !important;
+                    visibility: visible !important;
+                    pointer-events: auto !important;
+                    width: 16px !important;
+                    height: 16px !important;
+                    min-height: 16px;
+                    padding: 0;
+                    margin: 0;
+                    accent-color: var(--pjt-accent);
+                    flex: 0 0 auto;
+                }
                 .pjt-user-chip {
                     display: inline-flex; align-items: center; gap: 6px;
                     background: var(--pjt-surface-alt); border: 1px solid var(--pjt-border);
@@ -362,7 +449,7 @@
 
                 <div class="pjt-header">
                     <h1>Projectionist</h1>
-                    <span class="pjt-version">v1.0.2</span>
+                    <span class="pjt-version">v1.1.0</span>
                 </div>
                 <div class="pjt-tagline">
                     Plays preroll videos before movies and episodes. Folder-based — no Jellyfin library required.
@@ -484,11 +571,24 @@
                         </div>
 
                         <div class="pjt-row">
-                            <label class="pjt-label" for="pjt-session-select">Session behaviour</label>
-                            <select class="pjt-select" id="pjt-session-select">
+                            <label class="pjt-label" for="pjt-movie-session-select">Movie session behaviour</label>
+                            <select class="pjt-select" id="pjt-movie-session-select">
                                 <option value="0">Every playback</option>
                                 <option value="1">First of session (idle 20+ min triggers next)</option>
+                                <option value="4">Once per hour per user</option>
                                 <option value="2">Once per day per user</option>
+                            </select>
+                        </div>
+
+                        <div class="pjt-row">
+                            <label class="pjt-label" for="pjt-episode-session-select">TV episode session behaviour</label>
+                            <select class="pjt-select" id="pjt-episode-session-select">
+                                <option value="0">Every episode</option>
+                                <option value="1">First of session (idle 20+ min triggers next)</option>
+                                <option value="3">First of binge (same series)</option>
+                                <option value="4">Once per hour per user</option>
+                                <option value="2">Once per day per user</option>
+                                <option value="5">Once per day per series</option>
                             </select>
                         </div>
                     </div>
@@ -600,6 +700,19 @@
                     </div>
                 </div>
 
+                <div class="pjt-card">
+                    <h2>Feature preload</h2>
+                    <div class="pjt-row">
+                        <label class="pjt-label" for="pjt-preload-mode">Preload mode</label>
+                        <select class="pjt-select" id="pjt-preload-mode">
+                            <option value="0">Off</option>
+                            <option value="1">Warm - prepare playback info only</option>
+                            <option value="2">Hot - open stream early while preroll plays</option>
+                        </select>
+                        <div class="pjt-hint">Hot is experimental and web-client only. It can reduce the handoff pause, but may briefly create an extra stream/transcode request.</div>
+                    </div>
+                </div>
+
                 <div class="pjt-divider-label">Filters</div>
 
                 <div class="pjt-card">
@@ -612,9 +725,14 @@
                             <div class="pjt-hint">If the feature is shorter than this, no preroll. Useful for trailers/extras.</div>
                         </div>
                         <div class="pjt-row">
+                            <label class="pjt-label" for="pjt-min-preroll">Min preroll runtime (seconds)</label>
+                            <input class="pjt-input" id="pjt-min-preroll" type="number" min="0" />
+                            <div class="pjt-hint">If the preroll is shorter than this, it is skipped. 0 disables.</div>
+                        </div>
+                        <div class="pjt-row">
                             <label class="pjt-label" for="pjt-max-preroll">Max preroll runtime (seconds)</label>
                             <input class="pjt-input" id="pjt-max-preroll" type="number" min="0" />
-                            <div class="pjt-hint">Reserved for future filtering — not enforced yet.</div>
+                            <div class="pjt-hint">If the preroll is longer than this, it is skipped. 0 disables.</div>
                         </div>
                     </div>
                 </div>
@@ -717,6 +835,9 @@
             var idx = names.indexOf(s);
             return idx >= 0 ? idx : 0;
         }
+
+        var sessionModeNames = ['EveryPlayback','FirstOfSession','OncePerDay','FirstOfBinge','OncePerHour','OncePerSeriesPerDay'];
+        var preloadModeNames = ['Off','Warm','Hot'];
 
         function toast(msg, error) {
             var el = $('pjt-toast');
@@ -931,23 +1052,48 @@
             });
         }
 
+        var previewObjectUrl = null;
+
         function openPreview(fileName) {
             var v = $('pjt-modal-video');
-            v.src = ApiClient.getUrl('Plugins/Projectionist/Preview/' + encodeURIComponent(fileName));
+            closePreview();
             $('pjt-modal-title').textContent = fileName;
             $('pjt-modal-overlay').classList.add('pjt-show');
-            try { v.play(); } catch (_) {}
+
+            var headers = {};
+            try {
+                if (typeof ApiClient.accessToken === 'function') {
+                    headers['X-Emby-Token'] = ApiClient.accessToken();
+                }
+            } catch (_) {}
+
+            fetch(ApiClient.getUrl('Plugins/Projectionist/Preview/' + encodeURIComponent(fileName)), { headers: headers })
+                .then(function(res) {
+                    if (!res.ok) throw new Error('preview failed');
+                    return res.blob();
+                })
+                .then(function(blob) {
+                    previewObjectUrl = URL.createObjectURL(blob);
+                    v.src = previewObjectUrl;
+                    try { v.play(); } catch (_) {}
+                })
+                .catch(function() { toast('Preview failed', true); });
         }
+
         function closePreview() {
             var v = $('pjt-modal-video');
             try { v.pause(); } catch (_) {}
             v.removeAttribute('src');
             v.load();
+            if (previewObjectUrl) {
+                URL.revokeObjectURL(previewObjectUrl);
+                previewObjectUrl = null;
+            }
             $('pjt-modal-overlay').classList.remove('pjt-show');
         }
 
         function loadConfig() {
-            ApiClient.getPluginConfiguration(PluginConfig.pluginUniqueId).then(function(cfg) {
+            api('Config').then(function(cfg) {
                 $('pjt-folder').value = pick(cfg, 'PrerollFolderPath', '') || '';
                 $('pjt-extensions').value = pick(cfg, 'AllowedExtensions', '') || '.mp4,.mkv,.mov,.webm,.avi,.m4v';
                 $('pjt-en-movies').checked = !!pick(cfg, 'EnableForMovies', true);
@@ -955,8 +1101,11 @@
                 $('pjt-en-musicvids').checked = !!pick(cfg, 'EnableForMusicVideos', false);
                 $('pjt-count').value = pick(cfg, 'PrerollCount', 1);
                 $('pjt-mode-select').value = String(parseEnum(pick(cfg, 'SelectionMode', 0), ['Random','Sequential','Weighted','EqualRotation','RecencyBoost']));
-                $('pjt-session-select').value = String(parseEnum(pick(cfg, 'SessionMode', 0), ['EveryPlayback','FirstOfSession','OncePerDay','FirstOfBinge']));
+                var legacySession = parseEnum(pick(cfg, 'SessionMode', 0), sessionModeNames);
+                $('pjt-movie-session-select').value = String(parseEnum(pick(cfg, 'MovieSessionMode', legacySession), sessionModeNames));
+                $('pjt-episode-session-select').value = String(parseEnum(pick(cfg, 'EpisodeSessionMode', legacySession), sessionModeNames));
                 $('pjt-min-feature').value = pick(cfg, 'MinFeatureRuntimeSeconds', 0);
+                $('pjt-min-preroll').value = pick(cfg, 'MinPrerollDurationSeconds', 0);
                 $('pjt-max-preroll').value = pick(cfg, 'MaxPrerollDurationSeconds', 0);
                 // Smart selection
                 $('pjt-skip-resume').checked = !!pick(cfg, 'SkipOnResume', true);
@@ -978,6 +1127,10 @@
                 $('pjt-trailer-count').value = pick(cfg, 'TrailerCount', 0);
                 $('pjt-skip-enabled').checked = !!pick(cfg, 'EnableSkippablePrerolls', true);
                 $('pjt-skip-after').value = pick(cfg, 'SkippableAfterSeconds', 0);
+                var preloadFallback = pick(cfg, 'EnableFeaturePreload', false) ? 1 : 0;
+                var preloadMode = parseEnum(pick(cfg, 'FeaturePreloadMode', preloadFallback), preloadModeNames);
+                if (preloadFallback === 1 && preloadMode === 0) preloadMode = 1;
+                $('pjt-preload-mode').value = String(preloadMode);
                 refreshDiscovery();
                 refreshStats();
                 runValidation();
@@ -988,6 +1141,9 @@
         }
 
         function gatherConfig() {
+            var movieSessionMode = parseInt($('pjt-movie-session-select').value, 10) || 0;
+            var episodeSessionMode = parseInt($('pjt-episode-session-select').value, 10) || 0;
+            var preloadMode = parseInt($('pjt-preload-mode').value, 10) || 0;
             return {
                 PrerollFolderPath: $('pjt-folder').value.trim(),
                 AllowedExtensions: $('pjt-extensions').value.trim() || '.mp4,.mkv,.mov,.webm,.avi,.m4v',
@@ -996,10 +1152,13 @@
                 EnableForMusicVideos: $('pjt-en-musicvids').checked,
                 PrerollCount: parseInt($('pjt-count').value, 10) || 0,
                 SelectionMode: parseInt($('pjt-mode-select').value, 10) || 0,
-                SessionMode: parseInt($('pjt-session-select').value, 10) || 0,
+                SessionMode: movieSessionMode,
+                UseSeparateSessionModes: true,
+                MovieSessionMode: movieSessionMode,
+                EpisodeSessionMode: episodeSessionMode,
                 MinFeatureRuntimeSeconds: parseInt($('pjt-min-feature').value, 10) || 0,
+                MinPrerollDurationSeconds: parseInt($('pjt-min-preroll').value, 10) || 0,
                 MaxPrerollDurationSeconds: parseInt($('pjt-max-preroll').value, 10) || 0,
-                MinPrerollDurationSeconds: 0,
                 // Smart
                 SkipOnResume: $('pjt-skip-resume').checked,
                 MaturityGated: $('pjt-maturity-gated').checked,
@@ -1016,6 +1175,8 @@
                 TrailerCount: parseInt($('pjt-trailer-count').value, 10) || 0,
                 EnableSkippablePrerolls: $('pjt-skip-enabled').checked,
                 SkippableAfterSeconds: parseInt($('pjt-skip-after').value, 10) || 0,
+                EnableFeaturePreload: preloadMode !== 0,
+                FeaturePreloadMode: preloadMode,
                 EnableStatsTracking: true
             };
         }
@@ -1023,7 +1184,7 @@
         function saveConfig(silent) {
             var cfg = gatherConfig();
             if (!silent) Dashboard.showLoadingMsg();
-            return ApiClient.updatePluginConfiguration(PluginConfig.pluginUniqueId, cfg)
+            return api('Config', { method: 'POST', body: cfg, expectJson: false })
                 .then(function() {
                     if (!silent) Dashboard.hideLoadingMsg();
                     toast('Saved');

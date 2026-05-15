@@ -23,9 +23,7 @@ public sealed class IndexHtmlInjectionFilter : IStartupFilter
     // Use a version query so browsers don't cache stale copies of the hook
     // when we ship updates.
     private static readonly string ScriptVersion =
-        typeof(IndexHtmlInjectionFilter).Assembly.GetName().Version?.ToString() ?? "0";
-    private static readonly string ScriptTag =
-        $"<script src=\"/Plugins/Projectionist/Hook.js?v={ScriptVersion}\" defer></script>";
+        typeof(IndexHtmlInjectionFilter).Module.ModuleVersionId.ToString("N");
     private const string Marker = "Plugins/Projectionist/Hook.js";
 
     public IndexHtmlInjectionFilter(ILogger<IndexHtmlInjectionFilter> logger)
@@ -84,7 +82,7 @@ public sealed class IndexHtmlInjectionFilter : IStartupFilter
             return;
         }
 
-        var modified = InjectScriptTag(html);
+        var modified = InjectScriptTag(html, BuildScriptTag(context.Request.PathBase));
         var bytes = Encoding.UTF8.GetBytes(modified);
         context.Response.ContentLength = bytes.Length;
         // Force fresh re-fetch so the injection lands in the browser even if it
@@ -102,17 +100,24 @@ public sealed class IndexHtmlInjectionFilter : IStartupFilter
         var path = req.Path.Value ?? string.Empty;
         // Match the common entry points for the web client.
         if (path.Equals("/", StringComparison.Ordinal)) return true;
-        if (path.Equals("/web", StringComparison.OrdinalIgnoreCase)) return true;
-        if (path.Equals("/web/", StringComparison.OrdinalIgnoreCase)) return true;
-        if (path.EndsWith("/index.html", StringComparison.OrdinalIgnoreCase) &&
-            path.StartsWith("/web", StringComparison.OrdinalIgnoreCase)) return true;
+        if (path.Equals("/web", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith("/web", StringComparison.OrdinalIgnoreCase)) return true;
+        if (path.Equals("/web/", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith("/web/", StringComparison.OrdinalIgnoreCase)) return true;
+        if (path.EndsWith("/web/index.html", StringComparison.OrdinalIgnoreCase)) return true;
         return false;
     }
 
-    private static string InjectScriptTag(string html)
+    private static string BuildScriptTag(PathString pathBase)
+    {
+        var prefix = pathBase.HasValue ? pathBase.Value!.TrimEnd('/') : string.Empty;
+        return $"<script src=\"{prefix}/Plugins/Projectionist/Hook.js?v={ScriptVersion}\" defer></script>";
+    }
+
+    private static string InjectScriptTag(string html, string scriptTag)
     {
         var idx = html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
-        if (idx < 0) return html + "\n" + ScriptTag;
-        return html.Substring(0, idx) + ScriptTag + html.Substring(idx);
+        if (idx < 0) return html + "\n" + scriptTag;
+        return html.Substring(0, idx) + scriptTag + html.Substring(idx);
     }
 }

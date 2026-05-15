@@ -11,9 +11,8 @@ namespace Jellyfin.Plugin.Projectionist.Services;
 
 /// <summary>
 /// On plugin startup, asks the FileTransformation plugin (if installed) to inject
-/// our playback hook script into Jellyfin's web client index.html. If
-/// FileTransformation isn't installed, episodes won't get prerolls but everything
-/// else still works — we just log a one-time warning.
+/// our playback hook script into Jellyfin's web client index.html as an optional
+/// fallback. The built-in IStartupFilter injection is the primary path.
 /// </summary>
 public sealed class WebInjector : IHostedService
 {
@@ -36,10 +35,9 @@ public sealed class WebInjector : IHostedService
                 if (TryRegister()) return;
                 await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
             }
-            _logger.LogWarning(
+            _logger.LogDebug(
                 "[Projectionist] FileTransformation plugin not detected. " +
-                "Episodes will not receive prerolls until you install it from the " +
-                "unofficial plugin repo. Movies still work normally.");
+                "Using built-in index.html injection only.");
         }, cancellationToken);
         return Task.CompletedTask;
     }
@@ -113,7 +111,7 @@ public sealed class WebInjector : IHostedService
             registerMethod.Invoke(null, new[] { jObj });
             _logger.LogInformation(
                 "[Projectionist] registered index.html transformation with FileTransformation. " +
-                "Episodes will now receive prerolls.");
+                "Optional fallback injection is active.");
             return true;
         }
         catch (Exception ex)

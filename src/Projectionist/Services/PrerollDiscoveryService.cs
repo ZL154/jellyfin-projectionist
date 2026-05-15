@@ -47,7 +47,7 @@ public sealed class PrerollDiscoveryService
             var now = DateTime.UtcNow;
             if (now < _cacheExpiresUtc && key == _cacheKey) return _cache;
 
-            var exts = ParseExtensions(config.AllowedExtensions);
+            var exts = ParseExtensions(config.AllowedExtensions ?? string.Empty);
             var items = new List<PrerollItem>();
 
             foreach (var folder in folders)

@@ -29,25 +29,34 @@ Write-Host "==> dotnet restore" -ForegroundColor Cyan
 Write-Host "==> dotnet build (Release)" -ForegroundColor Cyan
 & dotnet build $proj -c Release --no-restore | Out-Host
 
-$dllSource = Join-Path $repoRoot 'src/Projectionist/bin/Release/net8.0/Jellyfin.Plugin.Projectionist.dll'
+$targetFramework = 'net9.0'
+$buildDir = Join-Path $repoRoot "src/Projectionist/bin/Release/$targetFramework"
+$dllSource = Join-Path $buildDir 'Jellyfin.Plugin.Projectionist.dll'
 if (-not (Test-Path $dllSource)) {
     throw "Build did not produce expected DLL at $dllSource"
 }
 
 # Resolve version
 if (-not $Version) {
-    $csproj = [xml](Get-Content $proj)
-    $Version = $csproj.Project.PropertyGroup.Version
-    if ($Version -is [System.Array]) { $Version = ($Version | Where-Object { $_ } | Select-Object -First 1) }
+    $metaPath = Join-Path $repoRoot 'src/Projectionist/meta.json'
+    if (Test-Path $metaPath) {
+        $Version = ((Get-Content $metaPath -Raw) | ConvertFrom-Json).version
+    }
+    if (-not $Version) {
+        $csproj = [xml](Get-Content $proj)
+        $Version = $csproj.Project.PropertyGroup.Version
+        if ($Version -is [System.Array]) { $Version = ($Version | Where-Object { $_ } | Select-Object -First 1) }
+    }
     if (-not $Version) { $Version = '0.0.0' }
 }
 
 $stagingDir = Join-Path $out "Projectionist_$Version"
 New-Item -ItemType Directory -Path $stagingDir | Out-Null
 Copy-Item $dllSource (Join-Path $stagingDir 'Jellyfin.Plugin.Projectionist.dll')
+Copy-Item (Join-Path $repoRoot 'src/Projectionist/meta.json') (Join-Path $stagingDir 'meta.json')
 
 # Zip up the staging dir contents (so unzip drops a Projectionist folder)
-$zipPath = Join-Path $out "Projectionist_$Version.zip"
+$zipPath = Join-Path $out "projectionist_$Version.zip"
 Compress-Archive -Path $stagingDir -DestinationPath $zipPath -Force
 
 Write-Host ""

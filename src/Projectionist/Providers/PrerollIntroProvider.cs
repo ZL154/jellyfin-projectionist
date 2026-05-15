@@ -98,9 +98,13 @@ public sealed class PrerollIntroProvider : IIntroProvider
 
         // ---- Session-mode filter (binge for episodes) ----
         var seriesId = (item as Episode)?.Series?.Id ?? Guid.Empty;
-        if (!_sessions.ShouldPlay(user.Id, config.SessionMode, seriesId))
+        var sessionMode = GetSessionModeForItem(item, config);
+        if (!_sessions.ShouldPlay(user.Id, sessionMode, seriesId))
         {
-            _logger.LogInformation("[Projectionist] session-mode filter rejected user {User}", user.Username);
+            _logger.LogInformation(
+                "[Projectionist] session-mode filter {Mode} rejected user {User}",
+                sessionMode,
+                user.Username);
             _sessions.RecordPlayback(user.Id);
             if (item is Episode) _sessions.RecordEpisodePlayback(user.Id, seriesId);
             return Task.FromResult(Enumerable.Empty<IntroInfo>());
@@ -166,7 +170,11 @@ public sealed class PrerollIntroProvider : IIntroProvider
             foreach (var (path, _) in picks) _stats.Record(path, user.Id);
         }
         _sessions.RecordPrerollPlayed(user.Id);
-        if (item is Episode) _sessions.RecordEpisodePlayback(user.Id, seriesId);
+        if (item is Episode)
+        {
+            _sessions.RecordEpisodePlayback(user.Id, seriesId);
+            _sessions.RecordSeriesPrerollPlayed(user.Id, seriesId);
+        }
 
         _logger.LogInformation("[Projectionist] returning {Count} preroll(s) before {ItemName}",
             intros.Count, item.Name);
@@ -187,4 +195,14 @@ public sealed class PrerollIntroProvider : IIntroProvider
         UserMode.AllExceptExcluded => config.UserIds is null || !config.UserIds.Contains(userId),
         _ => true,
     };
+
+    private static SessionMode GetSessionModeForItem(BaseItem item, PluginConfiguration config)
+    {
+        if (!config.UseSeparateSessionModes)
+        {
+            return config.SessionMode;
+        }
+
+        return item is Episode ? config.EpisodeSessionMode : config.MovieSessionMode;
+    }
 }

@@ -16,6 +16,8 @@ public sealed class SessionTracker
     private readonly ConcurrentDictionary<Guid, DateTime> _lastPrerollUtc = new();
     /// <summary>Per-user, per-series last episode-played timestamp. Used by FirstOfBinge.</summary>
     private readonly ConcurrentDictionary<(Guid UserId, Guid SeriesId), DateTime> _lastEpisodeUtc = new();
+    /// <summary>Per-user, per-series last preroll timestamp. Used by OncePerSeriesPerDay.</summary>
+    private readonly ConcurrentDictionary<(Guid UserId, Guid SeriesId), DateTime> _lastSeriesPrerollUtc = new();
 
     /// <summary>
     /// Returns true if a preroll should be played for this user given the current
@@ -29,6 +31,9 @@ public sealed class SessionTracker
         return mode switch
         {
             Configuration.SessionMode.FirstOfSession => !hadRecentPlayback,
+            Configuration.SessionMode.OncePerHour =>
+                !_lastPrerollUtc.TryGetValue(userId, out var lastHourlyPre) ||
+                (now - lastHourlyPre) >= TimeSpan.FromHours(1),
             Configuration.SessionMode.OncePerDay =>
                 !_lastPrerollUtc.TryGetValue(userId, out var lastPre) ||
                 (now - lastPre) >= TimeSpan.FromHours(20),
@@ -36,6 +41,10 @@ public sealed class SessionTracker
                 seriesId == default ||
                 !_lastEpisodeUtc.TryGetValue((userId, seriesId), out var lastEp) ||
                 (now - lastEp) >= SessionGap,
+            Configuration.SessionMode.OncePerSeriesPerDay =>
+                seriesId == default ||
+                !_lastSeriesPrerollUtc.TryGetValue((userId, seriesId), out var lastSeriesPre) ||
+                (now - lastSeriesPre) >= TimeSpan.FromHours(20),
             _ => true,
         };
     }
@@ -44,6 +53,12 @@ public sealed class SessionTracker
     {
         if (seriesId == default) return;
         _lastEpisodeUtc[(userId, seriesId)] = DateTime.UtcNow;
+    }
+
+    public void RecordSeriesPrerollPlayed(Guid userId, Guid seriesId)
+    {
+        if (seriesId == default) return;
+        _lastSeriesPrerollUtc[(userId, seriesId)] = DateTime.UtcNow;
     }
 
     /// <summary>

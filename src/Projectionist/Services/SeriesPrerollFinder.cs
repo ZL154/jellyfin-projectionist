@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using Jellyfin.Plugin.Projectionist.Models;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
@@ -44,7 +46,7 @@ public sealed class SeriesPrerollFinder
                         FileName = info.Name,
                         FileSizeBytes = info.Length,
                         LastModifiedUtc = info.LastWriteTimeUtc,
-                        DeterministicId = Guid.NewGuid(),
+                        DeterministicId = DeterministicGuid(info.FullName),
                         Tags = new() { "series", "per-series" },
                         Weight = 1.0,
                         SourceFolder = series.Path,
@@ -57,5 +59,13 @@ public sealed class SeriesPrerollFinder
             _logger.LogDebug(ex, "[Projectionist] series-preroll lookup failed for {Series}", series.Name);
         }
         return null;
+    }
+
+    private static Guid DeterministicGuid(string input)
+    {
+        Span<byte> hash = stackalloc byte[16];
+        using var md5 = MD5.Create();
+        md5.TryComputeHash(Encoding.UTF8.GetBytes(input), hash, out _);
+        return new Guid(hash);
     }
 }

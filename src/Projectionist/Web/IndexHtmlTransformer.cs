@@ -15,8 +15,10 @@ public static class IndexHtmlTransformer
         public string? contents { get; set; }
     }
 
-    private const string ScriptTag =
-        "<script src=\"/Plugins/Projectionist/Hook.js\" defer></script>";
+    private static readonly string ScriptVersion =
+        typeof(IndexHtmlTransformer).Module.ModuleVersionId.ToString("N");
+    private static readonly string ScriptTag =
+        $"<script src=\"../Plugins/Projectionist/Hook.js?v={ScriptVersion}\" defer></script>";
     private const string Marker = "Plugins/Projectionist/Hook.js";
 
     public static string Transform(Payload payload)

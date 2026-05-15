@@ -1,7 +1,7 @@
 using System.IO;
 using System.Reflection;
+using Jellyfin.Plugin.Projectionist.Configuration;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Jellyfin.Plugin.Projectionist.Api;
@@ -14,7 +14,6 @@ namespace Jellyfin.Plugin.Projectionist.Api;
 /// </summary>
 [ApiController]
 [Route("Plugins/Projectionist")]
-[AllowAnonymous]
 public sealed class HookController : ControllerBase
 {
     [HttpGet("Hook.js")]
@@ -33,5 +32,33 @@ public sealed class HookController : ControllerBase
         var content = reader.ReadToEnd();
         Response.Headers["Cache-Control"] = "public, max-age=300";
         return Content(content, "application/javascript");
+    }
+
+    [HttpGet("HookSettings")]
+    [Authorize]
+    public ActionResult<HookSettingsResponse> GetHookSettings()
+    {
+        var cfg = Plugin.Instance?.Configuration;
+        var preloadMode = cfg?.FeaturePreloadMode ?? FeaturePreloadMode.Off;
+        if (cfg?.EnableFeaturePreload == true && preloadMode == FeaturePreloadMode.Off)
+        {
+            preloadMode = FeaturePreloadMode.Warm;
+        }
+
+        return Ok(new HookSettingsResponse
+        {
+            EnableSkippablePrerolls = cfg?.EnableSkippablePrerolls ?? true,
+            SkippableAfterSeconds = cfg?.SkippableAfterSeconds ?? 0,
+            EnableFeaturePreload = preloadMode != FeaturePreloadMode.Off,
+            FeaturePreloadMode = preloadMode,
+        });
+    }
+
+    public sealed class HookSettingsResponse
+    {
+        public bool EnableSkippablePrerolls { get; set; }
+        public int SkippableAfterSeconds { get; set; }
+        public bool EnableFeaturePreload { get; set; }
+        public FeaturePreloadMode FeaturePreloadMode { get; set; }
     }
 }

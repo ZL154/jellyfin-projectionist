@@ -31,7 +31,11 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
         yield return new PluginPageInfo
         {
             Name = Name,
+            DisplayName = Name,
             EmbeddedResourcePath = $"{GetType().Namespace}.Configuration.configurationPage.html",
+            EnableInMainMenu = true,
+            MenuSection = "Plugins",
+            MenuIcon = "movie_filter",
         };
     }
 }

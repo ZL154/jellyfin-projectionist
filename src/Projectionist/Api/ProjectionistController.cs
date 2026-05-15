@@ -6,7 +6,6 @@ using System.Threading.Tasks;
 using Jellyfin.Plugin.Projectionist.Configuration;
 using Jellyfin.Plugin.Projectionist.Services;
 using MediaBrowser.Common.Api;
-using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -28,7 +27,7 @@ public sealed class ProjectionistController : ControllerBase
     private readonly ILogger<ProjectionistController> _logger;
     private readonly PrerollDiscoveryService _discovery;
     private readonly PrerollSelector _selector;
-    private readonly IServerConfigurationManager _serverConfig;
+    private readonly ILibraryManager _libraryManager;
     private readonly HiddenLibraryManager _hiddenLibrary;
     private readonly StatsStore _stats;
     private readonly IUserManager _userManager;
@@ -37,7 +36,7 @@ public sealed class ProjectionistController : ControllerBase
         ILogger<ProjectionistController> logger,
         PrerollDiscoveryService discovery,
         PrerollSelector selector,
-        IServerConfigurationManager serverConfig,
+        ILibraryManager libraryManager,
         HiddenLibraryManager hiddenLibrary,
         StatsStore stats,
         IUserManager userManager)
@@ -45,7 +44,7 @@ public sealed class ProjectionistController : ControllerBase
         _logger = logger;
         _discovery = discovery;
         _selector = selector;
-        _serverConfig = serverConfig;
+        _libraryManager = libraryManager;
         _hiddenLibrary = hiddenLibrary;
         _stats = stats;
         _userManager = userManager;
@@ -75,7 +74,7 @@ public sealed class ProjectionistController : ControllerBase
         _discovery.InvalidateCache();
         // Make sure the hidden library tracks the configured folder. This is what
         // actually makes the prerolls streamable.
-        await _hiddenLibrary.EnsureAsync(cfg.PrerollFolderPath ?? string.Empty);
+        await _hiddenLibrary.EnsureAsync(cfg);
         return NoContent();
     }
 
@@ -84,8 +83,8 @@ public sealed class ProjectionistController : ControllerBase
     public async Task<ActionResult<LibraryStatus>> SetupLibrary()
     {
         var cfg = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-        await _hiddenLibrary.EnsureAsync(cfg.PrerollFolderPath ?? string.Empty);
-        return Ok(_hiddenLibrary.GetStatus(cfg.PrerollFolderPath));
+        await _hiddenLibrary.EnsureAsync(cfg);
+        return Ok(_hiddenLibrary.GetStatus(cfg));
     }
 
     /// <summary>Remove the hidden Jellyfin library if it exists.</summary>
@@ -101,7 +100,7 @@ public sealed class ProjectionistController : ControllerBase
     public ActionResult<LibraryStatus> GetLibraryStatus()
     {
         var cfg = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-        return Ok(_hiddenLibrary.GetStatus(cfg.PrerollFolderPath));
+        return Ok(_hiddenLibrary.GetStatus(cfg));
     }
 
     /// <summary>List all preroll files currently discoverable across all configured folders.</summary>
@@ -111,8 +110,10 @@ public sealed class ProjectionistController : ControllerBase
         var cfg = Plugin.Instance?.Configuration ?? new PluginConfiguration();
         var items = _discovery.Discover(cfg);
         var folders = PrerollDiscoveryService.ResolveFolders(cfg);
-        var folder = cfg.PrerollFolderPath;
-        var folderExists = !string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder);
+        var folder = !string.IsNullOrWhiteSpace(cfg.PrerollFolderPath)
+            ? cfg.PrerollFolderPath
+            : string.Join(", ", folders.Select(f => f.Path));
+        var folderExists = folders.Count > 0 && folders.All(f => Directory.Exists(f.Path));
 
         return Ok(new DiscoveryResult
         {
@@ -205,16 +206,11 @@ public sealed class ProjectionistController : ControllerBase
     [HttpGet("Libraries")]
     public ActionResult<IEnumerable<LibraryBrief>> ListLibraries()
     {
-        var vfolders = _hiddenLibrary.GetExisting() is null
-            ? new List<LibraryBrief>()
-            : new List<LibraryBrief>();
-        try
-        {
-            // Use LibraryManager via reflection-free path: fetch all virtual folders
-            var allFolders = (_serverConfig as object)?.GetType(); // unused
-            // Easier: reach through Plugin.Instance? No — use IUserManager and prerendered list.
-        }
-        catch { }
+        var vfolders = _libraryManager.GetVirtualFolders()
+            .Where(v => !string.Equals(v.Name, HiddenLibraryManager.LibraryName, StringComparison.OrdinalIgnoreCase))
+            .Select(v => new LibraryBrief { Name = v.Name })
+            .OrderBy(v => v.Name)
+            .ToList();
         return Ok(vfolders);
     }
 
@@ -250,10 +246,14 @@ public sealed class ProjectionistController : ControllerBase
         {
             problems.Add("All content types are disabled — prerolls will never trigger.");
         }
-        var libStatus = _hiddenLibrary.GetStatus(cfg.PrerollFolderPath);
+        var libStatus = _hiddenLibrary.GetStatus(cfg);
         if (folders.Count > 0 && !libStatus.LibraryExists)
         {
             problems.Add("Hidden library is not set up. Click 'Set up library' so playback can resolve preroll items.");
+        }
+        else if (folders.Count > 0 && !libStatus.LibraryMatchesFolder)
+        {
+            problems.Add("Hidden library locations do not match the configured preroll folders. Click 'Set up library' to rebuild it.");
         }
         return Ok(new ValidationResult
         {
@@ -278,7 +278,7 @@ public sealed class ProjectionistController : ControllerBase
     public ActionResult<IEnumerable<DiscoveryFile>> Preview()
     {
         var cfg = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-        var pool = _discovery.Discover(cfg.PrerollFolderPath, cfg.AllowedExtensions);
+        var pool = _discovery.Discover(cfg);
         if (pool.Count == 0)
         {
             return Ok(Array.Empty<DiscoveryFile>());

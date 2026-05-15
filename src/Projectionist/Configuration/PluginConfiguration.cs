@@ -19,6 +19,8 @@ public enum SessionMode
     FirstOfSession = 1,
     OncePerDay = 2,
     FirstOfBinge = 3,
+    OncePerHour = 4,
+    OncePerSeriesPerDay = 5,
 }
 
 public enum UserMode
@@ -26,6 +28,13 @@ public enum UserMode
     AllUsers = 0,
     OnlyIncluded = 1,
     AllExceptExcluded = 2,
+}
+
+public enum FeaturePreloadMode
+{
+    Off = 0,
+    Warm = 1,
+    Hot = 2,
 }
 
 public sealed class PrerollFolder
@@ -76,6 +85,18 @@ public class PluginConfiguration : BasePluginConfiguration
 
     /// <summary>Behaviour controlling how often the same session sees a preroll.</summary>
     public SessionMode SessionMode { get; set; } = SessionMode.EveryPlayback;
+
+    /// <summary>
+    /// If true, movies/music videos and TV episodes use separate session modes.
+    /// When false, the legacy SessionMode value is used for every content type.
+    /// </summary>
+    public bool UseSeparateSessionModes { get; set; } = false;
+
+    /// <summary>Session behaviour for movies and music videos.</summary>
+    public SessionMode MovieSessionMode { get; set; } = SessionMode.EveryPlayback;
+
+    /// <summary>Session behaviour for TV episodes.</summary>
+    public SessionMode EpisodeSessionMode { get; set; } = SessionMode.EveryPlayback;
 
     /// <summary>
     /// Comma-separated list of file extensions to consider as preroll candidates.
@@ -175,4 +196,17 @@ public class PluginConfiguration : BasePluginConfiguration
 
     /// <summary>Min seconds the preroll must play before skip is allowed. 0 = always.</summary>
     public int SkippableAfterSeconds { get; set; } = 0;
+
+    /// <summary>
+    /// If true, the web-client hook asks Jellyfin to prepare playback info for the
+    /// feature while Projectionist prerolls are running. This is best-effort and
+    /// avoids opening a second media stream.
+    /// </summary>
+    public bool EnableFeaturePreload { get; set; } = false;
+
+    /// <summary>
+    /// Web-client preload behavior while prerolls run. Warm only prepares playback
+    /// info; Hot also opens a small early stream request where Jellyfin exposes one.
+    /// </summary>
+    public FeaturePreloadMode FeaturePreloadMode { get; set; } = FeaturePreloadMode.Off;
 }

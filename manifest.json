@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/ZL154/jellyfin-projectionist/main/docs/logo/logo.png",
     "versions": [
       {
+        "version": "1.1.0.0",
+        "changelog": "Adds split movie/TV session behaviour, Warm/Hot preload modes, dashboard sidebar access, improved episode preroll handling, and admin UI fixes.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/ZL154/jellyfin-projectionist/releases/download/v1.1.0/projectionist_1.1.0.0.zip",
+        "checksum": "808a502023757899afda358746d385d4",
+        "timestamp": "2026-05-15T13:00:00Z"
+      },
+      {
         "version": "1.0.2.0",
         "changelog": "Fixes: maturity gate no longer wrongly excludes untagged prerolls; library tile is now actually hidden from the home screen (CSS + MutationObserver client-side hider).",
         "targetAbi": "10.11.0.0",

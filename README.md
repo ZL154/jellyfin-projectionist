@@ -90,6 +90,7 @@ A Jellyfin plugin that plays preroll videos before movies **and** TV episodes. F
 - **Series-specific prerolls** — drop a `theme-preroll.mp4` (configurable name) in any series folder. Overrides global selection for that show
 - **Trailer mode** — chain N local trailers from the feature's own metadata before it plays. Cinema-style "and now our feature presentation"
 - **Skippable prerolls** — skip-button overlay during preroll playback with a configurable min-seconds delay
+- **Feature preload** — best-effort web-client warmup that prepares Jellyfin playback info for the movie or episode while prerolls are running
 
 ### 📊 Stats
 
@@ -104,7 +105,7 @@ A Jellyfin plugin that plays preroll videos before movies **and** TV episodes. F
 
 ### 🙈 Hidden internal library
 
-Jellyfin's player only streams files registered as library items. Projectionist creates a library called **Projectionist Prerolls** at your folder, hides it from every user via per-user policy preferences (`MyMediaExcludes`, `LatestItemExcludes`, `OrderedViews`), and uses it internally for playback. You should never see it in the UI — and if you do, click "Set up library" again to re-apply the hide.
+Jellyfin's player only streams files registered as library items. Projectionist creates a library called **Projectionist Prerolls** for your configured preroll folders, hides it from every user via per-user policy preferences (`MyMediaExcludes`, `LatestItemExcludes`, `OrderedViews`), and uses it internally for playback. You should never see it in the UI — and if you do, click "Set up library" again to re-apply the hide.
 
 ---
 
@@ -152,10 +153,10 @@ Then:
 
 ### Manual install
 
-1. Download `projectionist_1.0.2.0.zip` from the [latest release](https://github.com/ZL154/jellyfin-projectionist/releases/latest).
+1. Download `projectionist_1.1.0.0.zip` from the [latest release](https://github.com/ZL154/jellyfin-projectionist/releases/latest).
 2. Extract it into your Jellyfin plugins directory so the path looks like:
-   - **Docker:** `<config-volume>/plugins/Projectionist_1.0.2.0/`
-   - **Bare metal:** `<jellyfin-data>/plugins/Projectionist_1.0.2.0/`
+   - **Docker:** `<config-volume>/plugins/Projectionist_1.1.0.0/`
+   - **Bare metal:** `<jellyfin-data>/plugins/Projectionist_1.1.0.0/`
 3. Restart Jellyfin.
 4. Dashboard → Plugins → Projectionist → configure.
 
@@ -266,7 +267,8 @@ For movies that's the whole story. The provider:
 7. Picks N according to the selection mode
 8. (Optional) prepends N local trailers
 9. Resolves each pick via the hidden library to get a real `BaseItem.Id` (required for `MediaSourceInfo` lookup)
-10. Records cooldown, stats, session bookkeeping
+10. Optionally warms the feature's Jellyfin playback info in the web client while prerolls are running
+11. Records cooldown, stats, session bookkeeping
 
 For **episodes**, the bundled JavaScript hook calls the same endpoint client-side because Jellyfin's web/desktop/TV clients won't.
 

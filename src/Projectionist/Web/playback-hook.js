@@ -97,13 +97,32 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
     var minSkipSeconds = 0;
     var enabled = true;
     var prerollPaths = new Set();
+    var prerollIds = new Set();
+    var prerollNames = new Set();
+    window.__projectionistSettings = window.__projectionistSettings || { featurePreloadEnabled: false, featurePreloadMode: 0 };
+
+    function tryRequire(name) {
+        try {
+            if (window.require) return window.require(name);
+            if (window.RequireJS) return window.RequireJS(name);
+        } catch (_) {}
+        return null;
+    }
+
+    function getPlaybackManager() {
+        return window.playbackManager || tryRequire('playbackManager');
+    }
+
+    function getEvents() {
+        return window.Events || tryRequire('events') || tryRequire('Events');
+    }
 
     function ensureStyle() {
         if (document.getElementById(STYLE_ID)) return;
         var s = document.createElement('style');
         s.id = STYLE_ID;
         s.textContent =
-            '#' + BTN_ID + '{position:fixed;right:32px;bottom:120px;z-index:9999;'
+            '#' + BTN_ID + '{position:fixed;right:32px;bottom:120px;z-index:2147483000;'
             + 'background:rgba(20,20,28,.85);color:#fff;border:1px solid rgba(229,9,20,.6);'
             + 'border-radius:6px;padding:10px 18px;font:600 13px/1 -apple-system,sans-serif;'
             + 'cursor:pointer;backdrop-filter:blur(8px);transition:opacity .2s,transform .2s;'
@@ -117,29 +136,50 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
         try {
             var ac = (window.ApiClient || (window.connectionManager && connectionManager.currentApiClient && connectionManager.currentApiClient()));
             if (!ac) return;
-            ac.fetch({ url: ac.getUrl('Plugins/Projectionist/Config'), type: 'GET', dataType: 'json' })
+            ac.fetch({ url: ac.getUrl('Plugins/Projectionist/HookSettings'), type: 'GET', dataType: 'json' })
                 .then(function (cfg) {
                     if (!cfg) return;
                     minSkipSeconds = cfg.SkippableAfterSeconds || cfg.skippableAfterSeconds || 0;
                     enabled = (cfg.EnableSkippablePrerolls !== undefined ? cfg.EnableSkippablePrerolls : cfg.enableSkippablePrerolls) !== false;
+                    var preloadMode = parsePreloadMode(
+                        cfg.FeaturePreloadMode !== undefined ? cfg.FeaturePreloadMode : cfg.featurePreloadMode,
+                        (cfg.EnableFeaturePreload !== undefined ? cfg.EnableFeaturePreload : cfg.enableFeaturePreload) === true ? 1 : 0);
+                    window.__projectionistSettings.featurePreloadMode = preloadMode;
+                    window.__projectionistSettings.featurePreloadEnabled = preloadMode !== 0;
                 })
                 .catch(function () {});
         } catch (_) {}
     }
     loadConfig();
 
+    function parsePreloadMode(value, fallback) {
+        if (value === null || value === undefined) return fallback || 0;
+        if (typeof value === 'number') return value;
+        var s = String(value).toLowerCase();
+        if (/^\d+$/.test(s)) return parseInt(s, 10);
+        if (s === 'hot') return 2;
+        if (s === 'warm') return 1;
+        return 0;
+    }
+
     function isPrerollItem(item) {
-        if (!item || !item.Path) return false;
+        if (!item) return false;
         // Heuristic: item belongs to "Projectionist Prerolls" library, OR its path
         // is in the set we recorded when prepending intros.
+        if (item.Id && prerollIds.has(item.Id)) return true;
         if (prerollPaths.has(item.Path)) return true;
+        if (item.Name && prerollNames.has(item.Name)) return true;
         // Fallback: check parent name
-        if (item.SeriesName === 'Projectionist Prerolls') return true;
+        if (item.SeriesName === 'Projectionist Prerolls' ||
+            item.ParentName === 'Projectionist Prerolls' ||
+            item.CollectionName === 'Projectionist Prerolls') return true;
         return false;
     }
 
-    window.__projectionistMarkPreroll = function (path) {
+    window.__projectionistMarkPreroll = function (path, id, name) {
         if (path) prerollPaths.add(path);
+        if (id) prerollIds.add(id);
+        if (name) prerollNames.add(name);
     };
 
     function showButton() {
@@ -151,7 +191,7 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
             btn.textContent = 'Skip';
             btn.addEventListener('click', function () {
                 try {
-                    var pm = window.playbackManager;
+                    var pm = getPlaybackManager();
                     if (pm && typeof pm.nextTrack === 'function') pm.nextTrack();
                     else if (pm && typeof pm.stop === 'function') pm.stop();
                 } catch (_) {}
@@ -166,15 +206,17 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
     }
 
     function attachSkipWatcher() {
-        if (!window.Events || !window.playbackManager) {
+        var events = getEvents();
+        var pm = getPlaybackManager();
+        if (!events || !pm) {
             setTimeout(attachSkipWatcher, 400);
             return;
         }
         var revealTimer = null;
-        Events.on(playbackManager, 'playbackstart', function (e, player) {
+        events.on(pm, 'playbackstart', function (e, player) {
             if (revealTimer) { clearTimeout(revealTimer); revealTimer = null; }
             try {
-                var item = playbackManager.currentItem(player);
+                var item = pm.currentItem(player);
                 if (!isPrerollItem(item) || !enabled) {
                     hideButton();
                     return;
@@ -186,7 +228,7 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
                 }
             } catch (_) { hideButton(); }
         });
-        Events.on(playbackManager, 'playbackstop', function () {
+        events.on(pm, 'playbackstop', function () {
             hideButton();
             if (revealTimer) { clearTimeout(revealTimer); revealTimer = null; }
         });
@@ -258,6 +300,211 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
         return item && (item.Type === 'Episode' || item.MediaType === 'Episode');
     }
 
+    function getFirstPlayItem(options) {
+        if (!options) return null;
+        if (Array.isArray(options.items) && options.items.length) return options.items[0];
+        if (options.item) return options.item;
+        if (options.Item) return options.Item;
+        if (options.currentItem) return options.currentItem;
+        return null;
+    }
+
+    function getFirstPlayId(options) {
+        if (!options) return null;
+        if (Array.isArray(options.ids) && options.ids.length) return options.ids[0];
+        if (Array.isArray(options.itemIds) && options.itemIds.length) return options.itemIds[0];
+        if (Array.isArray(options.ItemIds) && options.ItemIds.length) return options.ItemIds[0];
+        return options.id || options.Id || options.itemId || options.ItemId || null;
+    }
+
+    function isVideoFeature(item) {
+        return item && (item.MediaType === 'Video' ||
+            item.Type === 'Movie' ||
+            item.Type === 'Episode' ||
+            item.Type === 'MusicVideo');
+    }
+
+    function markIntrosForSkip(intros) {
+        try {
+            intros.forEach(function (i) {
+                if (i && typeof window.__projectionistMarkPreroll === 'function') {
+                    window.__projectionistMarkPreroll(i.Path, i.Id, i.Name);
+                }
+            });
+        } catch (_) {}
+    }
+
+    function getAccessToken(apiClient) {
+        try {
+            if (apiClient && typeof apiClient.accessToken === 'function') return apiClient.accessToken();
+        } catch (_) {}
+        try {
+            if (apiClient && apiClient.accessToken) return apiClient.accessToken;
+        } catch (_) {}
+        try {
+            if (apiClient && apiClient._serverInfo && apiClient._serverInfo.AccessToken) return apiClient._serverInfo.AccessToken;
+        } catch (_) {}
+        try {
+            if (apiClient && typeof apiClient.serverInfo === 'function') {
+                var info = apiClient.serverInfo();
+                if (info && info.AccessToken) return info.AccessToken;
+            }
+        } catch (_) {}
+        return null;
+    }
+
+    function parsePreloadMode(value, fallback) {
+        if (value === null || value === undefined) return fallback || 0;
+        if (typeof value === 'number') return value;
+        var s = String(value).toLowerCase();
+        if (/^\d+$/.test(s)) return parseInt(s, 10);
+        if (s === 'hot') return 2;
+        if (s === 'warm') return 1;
+        return 0;
+    }
+
+    function getFeaturePreloadMode() {
+        var settings = window.__projectionistSettings || {};
+        var mode = parsePreloadMode(settings.featurePreloadMode, settings.featurePreloadEnabled === true ? 1 : 0);
+        return mode === 2 ? 2 : mode === 1 ? 1 : 0;
+    }
+
+    function buildHeaders(token, json) {
+        var headers = {};
+        if (json) headers['Content-Type'] = 'application/json';
+        if (token) {
+            headers['X-Emby-Token'] = token;
+            headers['X-MediaBrowser-Token'] = token;
+            headers.Authorization = 'MediaBrowser Token="' + token + '"';
+        }
+        return headers;
+    }
+
+    function normalizeStreamUrl(apiClient, url) {
+        if (!url) return null;
+        if (/^https?:\/\//i.test(url)) return url;
+        var clean = url.charAt(0) === '/' ? url.substring(1) : url;
+        try { return apiClient.getUrl(clean); } catch (_) { return url; }
+    }
+
+    function pickHotStreamUrl(apiClient, playbackInfo) {
+        var sources = (playbackInfo && (playbackInfo.MediaSources || playbackInfo.mediaSources)) || [];
+        for (var i = 0; i < sources.length; i++) {
+            var source = sources[i] || {};
+            var url = source.TranscodingUrl || source.transcodingUrl || source.DirectStreamUrl || source.directStreamUrl;
+            if (url) return normalizeStreamUrl(apiClient, url);
+        }
+        return null;
+    }
+
+    function firstPlaylistUri(text) {
+        var lines = String(text || '').split(/\r?\n/);
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i].trim();
+            if (line && line.charAt(0) !== '#') return line;
+        }
+        return null;
+    }
+
+    function hotFetchUrl(url, token, itemName, depth) {
+        depth = depth || 0;
+        var headers = buildHeaders(token, false);
+        if (!/\.m3u8(\?|$)/i.test(url)) {
+            headers.Range = 'bytes=0-524287';
+        }
+
+        return fetch(url, {
+            method: 'GET',
+            headers: headers,
+            credentials: 'same-origin',
+            cache: 'no-store'
+        }).then(function (res) {
+            if (!res || (!res.ok && res.status !== 206)) {
+                log('hot playback failed for', itemName, 'status', res && res.status);
+                return;
+            }
+
+            var contentType = (res.headers && res.headers.get && res.headers.get('content-type')) || '';
+            var isPlaylist = /\.m3u8(\?|$)/i.test(url) || /mpegurl|vnd\.apple\.mpegurl/i.test(contentType);
+            if (isPlaylist && depth < 2) {
+                return res.text().then(function (text) {
+                    var next = firstPlaylistUri(text);
+                    if (!next) {
+                        log('hot playback opened playlist for', itemName);
+                        return;
+                    }
+                    return hotFetchUrl(new URL(next, url).toString(), token, itemName, depth + 1);
+                });
+            }
+
+            log('hot playback opened stream for', itemName);
+            if (res.body && typeof res.body.getReader === 'function') {
+                var reader = res.body.getReader();
+                return reader.read().then(function () {
+                    try { reader.cancel(); } catch (_) {}
+                });
+            }
+            return res.arrayBuffer().catch(function () {});
+        }).catch(function () {
+            log('hot playback request failed for', itemName);
+        });
+    }
+
+    function preloadFeature(apiClient, item, options) {
+        var mode = getFeaturePreloadMode();
+        if (mode === 0 || !apiClient || !item || !item.Id) return;
+
+        window.__projectionistWarmedFeatures = window.__projectionistWarmedFeatures || {};
+        var startTicks = (options && options.startPositionTicks) || 0;
+        var warmKey = mode + ':' + item.Id + ':' + startTicks;
+        if (window.__projectionistWarmedFeatures[warmKey]) return;
+        window.__projectionistWarmedFeatures[warmKey] = true;
+
+        (function () {
+            try {
+                var userId = typeof apiClient.getCurrentUserId === 'function' ? apiClient.getCurrentUserId() : null;
+                var token = getAccessToken(apiClient);
+                var headers = buildHeaders(token, true);
+                var itemName = item.Name || item.Id;
+                if (!token) log((mode === 2 ? 'hot' : 'warm') + ' playback has no access token for', itemName);
+                var body = {
+                    UserId: userId,
+                    StartTimeTicks: startTicks,
+                    IsPlayback: mode === 2,
+                    AutoOpenLiveStream: mode === 2,
+                    EnableDirectPlay: true,
+                    EnableDirectStream: true,
+                    EnableTranscoding: true
+                };
+
+                log((mode === 2 ? 'hot opening' : 'warming') + ' playback info for', itemName);
+                fetch(apiClient.getUrl('Items/' + encodeURIComponent(item.Id) + '/PlaybackInfo'), {
+                    method: 'POST',
+                    headers: headers,
+                    credentials: 'same-origin',
+                    body: JSON.stringify(body)
+                }).then(function (res) {
+                    if (res && !res.ok) {
+                        log((mode === 2 ? 'hot' : 'warm') + ' playback failed for', itemName, 'status', res.status);
+                        throw new Error('preload playback info failed');
+                    }
+                    return res.json().catch(function () { return null; });
+                }).then(function (info) {
+                    if (mode !== 2) {
+                        log('warmed playback info for', itemName);
+                        return;
+                    }
+                    var streamUrl = pickHotStreamUrl(apiClient, info);
+                    if (!streamUrl) {
+                        log('hot playback found no early stream url for', itemName);
+                        return;
+                    }
+                    return hotFetchUrl(streamUrl, token, itemName, 0);
+                }).catch(function () {});
+            } catch (_) {}
+        })();
+    }
+
     function patch(playbackManager) {
         if (playbackManager.__projectionistPatched) return;
         playbackManager.__projectionistPatched = true;
@@ -267,16 +514,14 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
             var apiClient = getApiClient();
             if (!apiClient || !options) return origPlay(options);
 
-            // We only intervene when the FIRST item in the request is an Episode.
-            // For movies, Jellyfin already fetches intros itself so we no-op.
-            var firstItem = null;
-            if (Array.isArray(options.items) && options.items.length) {
-                firstItem = options.items[0];
-            }
-            // Some call sites pass `ids` instead of pre-resolved items.
-            var firstId = null;
-            if (Array.isArray(options.ids) && options.ids.length) {
-                firstId = options.ids[0];
+            // Episodes need us to prepend intros; movies fetch intros natively,
+            // but we still prefetch their intro list so the skip button can
+            // recognize movie prerolls.
+            var firstItem = getFirstPlayItem(options);
+            var firstId = getFirstPlayId(options);
+            if (typeof firstItem === 'string') {
+                firstId = firstId || firstItem;
+                firstItem = null;
             }
 
             // If we don't yet know the type, fetch it.
@@ -291,7 +536,14 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
             }
 
             return itemPromise.then(function (item) {
-                if (!isEpisode(item)) return origPlay(options);
+                if (!isEpisode(item)) {
+                    if (!isVideoFeature(item)) return origPlay(options);
+                    return fetchIntros(apiClient, item.Id || firstId).then(function (intros) {
+                        markIntrosForSkip(intros);
+                        preloadFeature(apiClient, item, options);
+                        return origPlay(options);
+                    });
+                }
 
                 return fetchIntros(apiClient, item.Id || firstId).then(function (intros) {
                     if (!intros.length) {
@@ -299,28 +551,49 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
                         return origPlay(options);
                     }
                     log('queueing', intros.length, 'preroll(s) before episode', item.Name || item.Id);
-
-                    // Mark each intro path so the skip-button hook recognises it.
-                    try {
-                        intros.forEach(function (i) {
-                            if (i && i.Path && typeof window.__projectionistMarkPreroll === 'function') {
-                                window.__projectionistMarkPreroll(i.Path);
-                            }
-                        });
-                    } catch (_) {}
+                    preloadFeature(apiClient, item, options);
+                    markIntrosForSkip(intros);
 
                     // Prepend intros to whichever input the caller used.
                     var newOptions = Object.assign({}, options);
                     if (Array.isArray(options.items)) {
                         newOptions.items = intros.concat(options.items);
                         delete newOptions.ids;
+                        delete newOptions.itemIds;
+                        delete newOptions.ItemIds;
                     } else if (Array.isArray(options.ids)) {
                         var introIds = intros.map(function (i) { return i.Id; });
                         newOptions.ids = introIds.concat(options.ids);
                         delete newOptions.items;
+                        delete newOptions.item;
+                        delete newOptions.Item;
+                        delete newOptions.currentItem;
+                    } else if (Array.isArray(options.itemIds)) {
+                        var introItemIds = intros.map(function (i) { return i.Id; });
+                        newOptions.itemIds = introItemIds.concat(options.itemIds);
+                        delete newOptions.items;
+                        delete newOptions.item;
+                        delete newOptions.Item;
+                        delete newOptions.currentItem;
+                    } else if (Array.isArray(options.ItemIds)) {
+                        var introUpperItemIds = intros.map(function (i) { return i.Id; });
+                        newOptions.ItemIds = introUpperItemIds.concat(options.ItemIds);
+                        delete newOptions.items;
+                        delete newOptions.item;
+                        delete newOptions.Item;
+                        delete newOptions.currentItem;
                     } else {
                         newOptions.items = intros.concat([item]);
                         delete newOptions.ids;
+                        delete newOptions.itemIds;
+                        delete newOptions.ItemIds;
+                        delete newOptions.item;
+                        delete newOptions.Item;
+                        delete newOptions.currentItem;
+                        delete newOptions.id;
+                        delete newOptions.Id;
+                        delete newOptions.itemId;
+                        delete newOptions.ItemId;
                     }
                     // Preserve playback start position only on the FEATURE, not on intros.
                     // playbackManager honours startPositionTicks on the first item; we
