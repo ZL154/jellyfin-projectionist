@@ -40,6 +40,7 @@ A Jellyfin plugin that plays preroll videos before movies **and** TV episodes. F
 - [How it works](#-how-it-works)
 - [Building from source](#-building-from-source)
 - [Compatibility](#-compatibility)
+- [Support the project](#-support-the-project)
 - [License](#-license)
 
 - 🗂️ **Folder-based.** Point at a folder and you're done. We create + manage the hidden Jellyfin library transparently and remove it from every user's home screen automatically.
@@ -314,6 +315,18 @@ https://www.iamparadox.dev/jellyfin/plugins/manifest.json
 
 Projectionist autodetects FileTransformation at runtime and uses it as a second injection path when present.
 
+
+---
+
+## ❤ Support the project
+
+Projectionist for Jellyfin is built and maintained in my spare time. If it's making your server feel more polished and you'd like to support ongoing development, any of these means a lot:
+
+- ⭐ **Star this repo** — it's free and helps others find it
+- 💖 **[Sponsor on GitHub](https://github.com/sponsors/ZL154)** — one-off or monthly, every dollar reaches the project
+- ☕ **[Buy me a coffee on Ko-fi](https://ko-fi.com/zl154)** — one-off tips
+
+Not expected, just appreciated. Issue reports and clear bug reports are equally valuable.
 
 ---
 
