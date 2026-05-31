@@ -164,7 +164,7 @@ public sealed class ProjectionistController : ControllerBase
     public ActionResult<StatsResponse> GetStats()
     {
         var snap = _stats.Snapshot();
-        var users = _userManager.Users.ToDictionary(u => u.Id, u => u.Username);
+        var users = _userManager.EnumerateAll().ToDictionary(u => u.Id, u => u.Username);
         return Ok(new StatsResponse
         {
             TotalPlays = snap.TotalPlays,
@@ -195,7 +195,7 @@ public sealed class ProjectionistController : ControllerBase
     [HttpGet("Users")]
     public ActionResult<IEnumerable<UserBrief>> ListUsers()
     {
-        var users = _userManager.Users
+        var users = _userManager.EnumerateAll()
             .Select(u => new UserBrief { Id = u.Id, Name = u.Username })
             .OrderBy(u => u.Name)
             .ToList();

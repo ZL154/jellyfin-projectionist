@@ -307,7 +307,7 @@ public sealed class HiddenLibraryManager
         // Critical: User entities returned by IUserManager are detached from the
         // DbContext that ultimately persists, so SetPreference + UpdateUserAsync
         // doesn't actually save the new Preferences. We use the DbContext directly.
-        var userIds = _userManager.Users.Select(u => u.Id).ToList();
+        var userIds = _userManager.EnumerateAll().Select(u => u.Id).ToList();
         await using var ctx = await _dbFactory.CreateDbContextAsync().ConfigureAwait(false);
         var savedAny = false;
 
