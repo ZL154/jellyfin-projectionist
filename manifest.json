@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/ZL154/jellyfin-projectionist/main/docs/logo/logo.png",
     "versions": [
       {
+        "version": "1.1.1.0",
+        "changelog": "Fixes Stats endpoint, /Users list, and HiddenLibrary auto-hide on Jellyfin 10.11.9+ where IUserManager.Users was removed from the interface.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/ZL154/jellyfin-projectionist/releases/download/v1.1.1/projectionist_1.1.1.0.zip",
+        "checksum": "6981ffcb9d320afc978e56f6e9e26d8b",
+        "timestamp": "2026-05-31T03:35:00Z"
+      },
+      {
         "version": "1.1.0.0",
         "changelog": "Adds split movie/TV session behaviour, Warm/Hot preload modes, dashboard sidebar access, improved episode preroll handling, and admin UI fixes.",
         "targetAbi": "10.11.0.0",
