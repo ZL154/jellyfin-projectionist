@@ -1077,87 +1077,178 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
 
     var interceptedEpisodes = new Set(); // itemIds we've already shown a preroll for in this session
     var overlayActive = false;
+    var COVER_ID = 'pjt-classify-cover';
 
-    function performOverlayIntercept(underlyingVideo, episodeItemId) {
-        if (overlayActive) return;
+    function ensureBlackCover() {
+        var c = document.getElementById(COVER_ID);
+        if (c) return c;
+        c = document.createElement('div');
+        c.id = COVER_ID;
+        // Slightly lower z-index than the overlay so the overlay video
+        // visually replaces this cover when it appears.
+        c.style.cssText = 'position:fixed;inset:0;background:#000;z-index:2147482997;';
+        document.body.appendChild(c);
+        return c;
+    }
+    function removeBlackCover() {
+        var c = document.getElementById(COVER_ID);
+        if (c) c.remove();
+    }
+
+    // Build a streaming URL for the given itemId via /PlaybackInfo so we
+    // get the correct container + auth, instead of guessing /stream.mp4
+    // from the underlying video's URL (which often 404s when the preroll
+    // file is mkv or when the Tag param doesn't match).
+    function resolvePrerollStreamUrl(itemId) {
+        var ac = getApiClient();
+        if (!ac) return Promise.resolve(null);
+        var userId = (function () {
+            try { return JSON.parse(localStorage.getItem('jellyfin_credentials')).Servers[0].UserId; }
+            catch (_) { return null; }
+        })();
+        var token = (ac.accessToken && ac.accessToken()) || '';
+        return ac.fetch({
+            url: ac.getUrl('Items/' + itemId + '/PlaybackInfo' + (userId ? '?UserId=' + userId : '')),
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({}),
+            dataType: 'json',
+        }).then(function (info) {
+            var ms = info && info.MediaSources && info.MediaSources[0];
+            if (!ms) return null;
+            // Direct stream when supported (smaller files / mp4 / mkv that
+            // browsers can play). Otherwise fall back to transcoding URL.
+            if (ms.SupportsDirectStream || ms.SupportsDirectPlay) {
+                // ms.Container can be a comma-separated FFmpeg container list
+                // (e.g. "mov,mp4,m4a,3gp,3g2,mj2"). Pick a browser-friendly
+                // single extension. The actual file bytes are unaffected;
+                // the extension is just a Content-Type hint.
+                var rawContainer = ms.Container || 'mp4';
+                var container;
+                if (rawContainer.indexOf(',') >= 0) {
+                    var parts = rawContainer.split(',').map(function (p) { return p.trim(); });
+                    var preferred = parts.filter(function (p) {
+                        return ['mp4', 'm4v', 'webm', 'mkv'].indexOf(p) >= 0;
+                    });
+                    container = preferred[0] || parts[0] || 'mp4';
+                } else {
+                    container = rawContainer;
+                }
+                return location.origin + '/Videos/' + itemId + '/stream.' + container
+                    + '?Static=true&mediaSourceId=' + (ms.Id || itemId)
+                    + '&api_key=' + token
+                    + (ms.ETag ? '&Tag=' + ms.ETag : '');
+            }
+            if (ms.TranscodingUrl) {
+                // TranscodingUrl is relative, prefix origin.
+                return location.origin + ms.TranscodingUrl;
+            }
+            // Last-resort: best-guess mp4 stream.
+            return location.origin + '/Videos/' + itemId + '/stream.mp4?Static=true&mediaSourceId=' + itemId + '&api_key=' + token;
+        }).catch(function () { return null; });
+    }
+
+    function performOverlayIntercept(underlyingVideo, episodeItemId, resumeAfter) {
+        if (overlayActive) { resumeAfter && resumeAfter(); return; }
         if (interceptedEpisodes.has(episodeItemId)) {
             dlog('episode-already-shown', { episodeId: episodeItemId });
+            resumeAfter && resumeAfter();
             return;
         }
         var ac = getApiClient();
-        if (!ac) return;
+        if (!ac) { resumeAfter && resumeAfter(); return; }
         ac.fetch({ url: ac.getUrl('Items/' + episodeItemId + '/Intros'), type: 'GET', dataType: 'json' })
             .then(function (res) {
                 var intros = (res && res.Items) || [];
                 if (intros.length === 0) {
                     dlog('episode-no-intros', { episodeId: episodeItemId });
+                    resumeAfter && resumeAfter();
                     return;
                 }
                 var preroll = intros[0];
-                if (!preroll || !preroll.Id) return;
-                // Build the preroll's stream URL by mirroring the
-                // underlying video's auth/device query params.
-                var underlyingSrc = underlyingVideo.currentSrc || underlyingVideo.src || '';
-                var prerollUrl = underlyingSrc
-                    .replace(/\/Videos\/[0-9a-f]{32}\//i, '/Videos/' + preroll.Id + '/')
-                    .replace(/mediaSourceId=[0-9a-f]{32}/i, 'mediaSourceId=' + preroll.Id)
-                    .replace(/\/stream\.[a-z0-9]+/i, '/stream.mp4');
-                if (!/\/Videos\//i.test(prerollUrl)) {
-                    // Could not build the URL from the underlying src;
-                    // construct minimally from ApiClient.
-                    var token = (ac.accessToken && ac.accessToken()) || '';
-                    prerollUrl = location.origin + '/Videos/' + preroll.Id + '/stream.mp4?Static=true&mediaSourceId=' + preroll.Id + '&api_key=' + token;
-                }
-                dlog('episode-overlay-start', {
-                    episodeId: episodeItemId, prerollId: preroll.Id, prerollName: preroll.Name,
+                if (!preroll || !preroll.Id) { resumeAfter && resumeAfter(); return; }
+                return resolvePrerollStreamUrl(preroll.Id).then(function (prerollUrl) {
+                    if (!prerollUrl) {
+                        dlog('episode-stream-resolve-failed', { prerollId: preroll.Id });
+                        resumeAfter && resumeAfter();
+                        return;
+                    }
+                    dlog('episode-overlay-start', {
+                        episodeId: episodeItemId, prerollId: preroll.Id,
+                        prerollName: preroll.Name, url: prerollUrl.substring(0, 100),
+                    });
+                    interceptedEpisodes.add(episodeItemId);
+                    overlayActive = true;
+                    currentPrerollFileName = preroll.Path
+                        ? preroll.Path.split(/[/\\]/).pop()
+                        : preroll.Name;
+
+                    // Keep the underlying video paused for the duration
+                    // of the overlay. The black cover (already up) will
+                    // be replaced visually by the overlay video.
+                    try { underlyingVideo.pause(); } catch (_) {}
+
+                    var overlay = document.createElement('div');
+                    overlay.id = 'pjt-episode-overlay';
+                    overlay.style.cssText =
+                        'position:fixed;inset:0;background:#000;z-index:2147482998;'
+                        + 'display:flex;align-items:center;justify-content:center;';
+                    var ov = document.createElement('video');
+                    ov.id = 'pjt-episode-overlay-video';
+                    ov.style.cssText = 'width:100%;height:100%;object-fit:contain;background:#000;';
+                    ov.autoplay = true;
+                    ov.playsInline = true;
+                    ov.src = prerollUrl;
+                    overlay.appendChild(ov);
+                    document.body.appendChild(overlay);
+                    // Explicitly call play() — some browsers block autoplay
+                    // even with the autoplay attribute, depending on user-
+                    // gesture context. The user just clicked Play on the
+                    // episode so we should still be within the activation.
+                    var playPromise = ov.play();
+                    if (playPromise && typeof playPromise.catch === 'function') {
+                        playPromise.catch(function (err) {
+                            dlog('episode-overlay-play-failed', { msg: String(err) });
+                        });
+                    }
+
+                    var cleanedUp = false;
+                    function cleanup(reason) {
+                        if (cleanedUp) return;
+                        cleanedUp = true;
+                        overlayActive = false;
+                        try { overlay.remove(); } catch (_) {}
+                        removeBlackCover();
+                        try { underlyingVideo.play(); } catch (_) {}
+                        hideSkip();
+                        currentPrerollFileName = null;
+                        dlog('episode-overlay-end', { episodeId: episodeItemId, reason: reason });
+                    }
+                    ov.addEventListener('ended', function () { cleanup('ended'); });
+                    ov.addEventListener('error', function () {
+                        dlog('episode-overlay-error', { src: prerollUrl.substring(0, 100), err: ov.error && ov.error.code });
+                        cleanup('error');
+                    });
+
+                    // Safety timeout: if the overlay video doesn't reach
+                    // 'canplay' within 4 seconds, abandon the preroll so
+                    // the user isn't stuck on a black screen.
+                    var canplayFired = false;
+                    ov.addEventListener('canplay', function () { canplayFired = true; });
+                    setTimeout(function () {
+                        if (!canplayFired && !cleanedUp) {
+                            dlog('episode-overlay-timeout', { prerollId: preroll.Id });
+                            cleanup('timeout');
+                        }
+                    }, 4000);
+
+                    showSkipForOverlay(ov, function () { cleanup('skip'); });
                 });
-                interceptedEpisodes.add(episodeItemId);
-                overlayActive = true;
-                // Track filename for skip-rate reporting
-                currentPrerollFileName = preroll.Path
-                    ? preroll.Path.split(/[/\\]/).pop()
-                    : preroll.Name;
-
-                // Pause the underlying Jellyfin video so it doesn't
-                // progress while the preroll plays.
-                try { underlyingVideo.pause(); } catch (_) {}
-
-                // Create overlay
-                var overlay = document.createElement('div');
-                overlay.id = 'pjt-episode-overlay';
-                overlay.style.cssText =
-                    'position:fixed;inset:0;background:#000;z-index:2147482998;'
-                    + 'display:flex;align-items:center;justify-content:center;';
-                var ov = document.createElement('video');
-                ov.id = 'pjt-episode-overlay-video';
-                ov.style.cssText = 'width:100%;height:100%;object-fit:contain;background:#000;';
-                ov.autoplay = true;
-                ov.playsInline = true;
-                ov.src = prerollUrl;
-                overlay.appendChild(ov);
-                document.body.appendChild(overlay);
-
-                function cleanup() {
-                    overlayActive = false;
-                    try { overlay.remove(); } catch (_) {}
-                    // Resume the underlying Jellyfin video.
-                    try { underlyingVideo.play(); } catch (_) {}
-                    hideSkip();
-                    currentPrerollFileName = null;
-                    dlog('episode-overlay-end', { episodeId: episodeItemId });
-                }
-                ov.addEventListener('ended', cleanup);
-                ov.addEventListener('error', function () {
-                    dlog('episode-overlay-error', { src: prerollUrl.substring(0, 100) });
-                    cleanup();
-                });
-
-                // Show the skip button — clicking it triggers cleanup.
-                // We hand it an "ov" reference so the skip handler can
-                // POST skip-rate stats and trigger cleanup directly.
-                showSkipForOverlay(ov, cleanup);
             })
-            .catch(function (e) { dlog('episode-intros-fail', { msg: String(e) }); });
+            .catch(function (e) {
+                dlog('episode-intros-fail', { msg: String(e) });
+                resumeAfter && resumeAfter();
+            });
     }
 
     function showSkipForOverlay(overlayVideo, cleanupFn) {
@@ -1195,36 +1286,64 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
         dlog('show', { host: host.tagName + '.' + (host.className || ''), context: 'overlay' });
     }
 
-    function maybeInterceptEpisode(video, itemId) {
+    function maybeInterceptEpisode(video, itemId, resumeAfter) {
         var ac = getApiClient();
-        if (!ac) return;
+        if (!ac) { resumeAfter && resumeAfter(); return; }
         ac.fetch({ url: ac.getUrl('Items/' + itemId), type: 'GET', dataType: 'json' })
             .then(function (item) {
-                if (!item) return;
-                if (item.Type !== 'Episode') return;
-                if (ITEM_CACHE[itemId] === true) return;
-                performOverlayIntercept(video, itemId);
+                if (!item || item.Type !== 'Episode' || ITEM_CACHE[itemId] === true) {
+                    resumeAfter && resumeAfter();
+                    return;
+                }
+                performOverlayIntercept(video, itemId, resumeAfter);
             })
-            .catch(function () {});
+            .catch(function () { resumeAfter && resumeAfter(); });
     }
 
     function attachToVideo(video) {
         if (attachedVideos.has(video)) return;
         attachedVideos.add(video);
         dlog('attach-video', { src: (video.currentSrc || video.src || '').substring(0, 80) });
-        video.addEventListener('loadedmetadata', function () {
-            onVideoMetadata(video);
-            // Episode intro overlay: kick on new metadata if the item is an
-            // Episode AND we haven't already shown a preroll for it.
-            // overlayActive guard prevents re-trigger if metadata fires
-            // twice while the overlay is up.
+        // loadstart fires AS SOON AS Jellyfin sets video.src — before
+        // loadedmetadata and before any frames are decoded. Cover the
+        // video immediately so the user never sees a flash of the
+        // episode while we classify async.
+        video.addEventListener('loadstart', function () {
             if (overlayActive) return;
             var src = video.currentSrc || video.src;
             var id = parseItemIdFromSrc(src);
             if (!id) return;
+            try { video.pause(); } catch (_) {}
+            ensureBlackCover();
+        });
+
+        video.addEventListener('loadedmetadata', function () {
+            onVideoMetadata(video);
+            if (overlayActive) return;
+            var src = video.currentSrc || video.src;
+            var id = parseItemIdFromSrc(src);
+            if (!id) return;
+
+            // Cover should already be up from loadstart; ensure pause too.
+            var alreadyPaused = video.paused;
+            try { video.pause(); } catch (_) {}
+            ensureBlackCover();
+
+            function resume() {
+                removeBlackCover();
+                if (!alreadyPaused) {
+                    try { video.play(); } catch (_) {}
+                }
+            }
+
             isPrerollItemId(id).then(function (isPre) {
-                if (isPre) return; // It's a preroll itself; no intercept.
-                maybeInterceptEpisode(video, id);
+                if (isPre) {
+                    // This IS the preroll (movie's server-prepended one).
+                    // Let it play through normally.
+                    resume();
+                    return;
+                }
+                maybeInterceptEpisode(video, id, resume);
             });
         });
         video.addEventListener('playing', function () { onVideoMetadata(video); });
