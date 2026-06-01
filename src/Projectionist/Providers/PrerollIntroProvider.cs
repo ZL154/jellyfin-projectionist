@@ -25,6 +25,8 @@ public sealed class PrerollIntroProvider : IIntroProvider
     private readonly SeriesPrerollFinder _seriesFinder;
     private readonly TrailerFetcher _trailerFetcher;
     private readonly StatsStore _stats;
+    private readonly FeatureOptOutStore _optOuts;
+    private readonly ComingSoonPicker _comingSoon;
 
     public PrerollIntroProvider(
         ILogger<PrerollIntroProvider> logger,
@@ -36,7 +38,9 @@ public sealed class PrerollIntroProvider : IIntroProvider
         HiddenLibraryManager hiddenLibrary,
         SeriesPrerollFinder seriesFinder,
         TrailerFetcher trailerFetcher,
-        StatsStore stats)
+        StatsStore stats,
+        FeatureOptOutStore optOuts,
+        ComingSoonPicker comingSoon)
     {
         _logger = logger;
         _discovery = discovery;
@@ -48,6 +52,8 @@ public sealed class PrerollIntroProvider : IIntroProvider
         _seriesFinder = seriesFinder;
         _trailerFetcher = trailerFetcher;
         _stats = stats;
+        _optOuts = optOuts;
+        _comingSoon = comingSoon;
     }
 
     public string Name => "Projectionist";
@@ -60,6 +66,12 @@ public sealed class PrerollIntroProvider : IIntroProvider
         var config = Plugin.Instance?.Configuration;
         if (config is null)
             return Task.FromResult(Enumerable.Empty<IntroInfo>());
+
+        if (_optOuts.IsOptedOut(item.Id))
+        {
+            _logger.LogDebug("[Projectionist] item {Item} is opted-out, skipping preroll", item.Name);
+            return Task.FromResult(Enumerable.Empty<IntroInfo>());
+        }
 
         // ---- Content-type gate ----
         if (!IsContentTypeEnabled(item, config))
@@ -140,6 +152,13 @@ public sealed class PrerollIntroProvider : IIntroProvider
             // Trailers are real BaseItems with their own IDs — push them at front
             var trailerIntros = trailers.Select(t => (t.Path, t.Id)).ToList();
             picks.InsertRange(0, trailerIntros);
+        }
+
+        if (config.EnableComingSoonTrailers && config.ComingSoonTrailerCount > 0)
+        {
+            var comingSoon = _comingSoon.PickTrailers(user, item, config.ComingSoonTrailerCount);
+            var comingSoonIntros = comingSoon.Select(t => (t.Path, t.Id)).ToList();
+            picks.InsertRange(0, comingSoonIntros);
         }
 
         if (picks.Count == 0)

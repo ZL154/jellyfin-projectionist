@@ -13,7 +13,6 @@ namespace Jellyfin.Plugin.Projectionist.Services;
 /// </summary>
 public sealed class PrerollSelector
 {
-    private static readonly Random _rng = new();
     private static int _sequentialCursor;
     private static readonly object _cursorLock = new();
     // Per-rotation-group cursor for EqualRotation mode
@@ -132,7 +131,10 @@ public sealed class PrerollSelector
                            string.Equals(r.LibraryName, libName, StringComparison.OrdinalIgnoreCase);
             var typeMatch = string.IsNullOrEmpty(r.ItemType) ||
                             string.Equals(r.ItemType, typeName, StringComparison.OrdinalIgnoreCase);
-            if (libMatch && typeMatch) return r;
+            var genreMatch = r.MatchGenres is null || r.MatchGenres.Count == 0 ||
+                             (feature.Genres is not null &&
+                              feature.Genres.Any(g => r.MatchGenres.Contains(g, StringComparer.OrdinalIgnoreCase)));
+            if (libMatch && typeMatch && genreMatch) return r;
         }
         return null;
     }
@@ -157,12 +159,17 @@ public sealed class PrerollSelector
 
     private IReadOnlyList<PrerollItem> PickRandom(IReadOnlyList<PrerollItem> pool, int count)
     {
-        if (count >= pool.Count) return pool.OrderBy(_ => _rng.Next()).ToList();
+        if (count >= pool.Count)
+        {
+            var arr = pool.ToArray();
+            Random.Shared.Shuffle(arr);
+            return arr.ToList();
+        }
         var indices = new HashSet<int>();
         var result = new List<PrerollItem>(count);
         while (result.Count < count)
         {
-            var idx = _rng.Next(pool.Count);
+            var idx = Random.Shared.Next(pool.Count);
             if (indices.Add(idx)) result.Add(pool[idx]);
         }
         return result;
@@ -195,7 +202,7 @@ public sealed class PrerollSelector
                 var recencyFactor = ageDays < 7 ? 2.0 : Math.Max(1.0, 30.0 / ageDays);
                 w *= recencyFactor;
             }
-            return (item: p, weight: w * (0.5 + _rng.NextDouble()));
+            return (item: p, weight: w * (0.5 + Random.Shared.NextDouble()));
         })
         .OrderByDescending(x => x.weight)
         .Take(count)
@@ -223,38 +230,4 @@ public sealed class PrerollSelector
         return result;
     }
 
-    // ---------- Maturity ranker (rough but useful) ----------
-    internal static class MaturityRanker
-    {
-        /// <summary>
-        /// Score for the FEATURE. Unknown defaults HIGH so any preroll is allowed
-        /// (we don't gate on a feature we can't classify).
-        /// </summary>
-        public static int Score(string? rating) => ScoreInternal(rating, unknown: 100);
-
-        /// <summary>
-        /// Score for a PREROLL. Unknown defaults LOW so an untagged preroll
-        /// always passes — the gate only kicks in when both sides are tagged.
-        /// </summary>
-        public static int ScorePreroll(string? rating) => ScoreInternal(rating, unknown: 0);
-
-        private static int ScoreInternal(string? rating, int unknown)
-        {
-            if (string.IsNullOrWhiteSpace(rating)) return unknown;
-            var r = rating.Trim().ToUpperInvariant();
-            // US MPAA
-            if (r.Contains("NC-17")) return 100;
-            if (r is "X" or "AO") return 100;
-            if (r is "R" or "M" or "MA") return 80;
-            if (r is "PG-13" or "TV-14") return 60;
-            if (r is "PG" or "TV-PG") return 40;
-            if (r is "G" or "TV-G" or "TV-Y" or "TV-Y7") return 20;
-            // UK BBFC
-            if (r is "U" or "UC") return 20;
-            if (r is "12" or "12A") return 60;
-            if (r is "15") return 80;
-            if (r is "18") return 100;
-            return 50;
-        }
-    }
 }

@@ -74,6 +74,9 @@ public sealed class PrerollDiscoveryService
 
                 foreach (var path in paths)
                 {
+                    var parts = path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    if (parts.Any(p => p.Length > 0 && p[0] == '.')) continue;
+
                     var ext = Path.GetExtension(path);
                     if (string.IsNullOrEmpty(ext) || !exts.Contains(ext.ToLowerInvariant())) continue;
 
@@ -193,11 +196,6 @@ public sealed class PrerollDiscoveryService
         return new HashSet<string>(parts, StringComparer.OrdinalIgnoreCase);
     }
 
-    private static Guid DeterministicGuid(string input)
-    {
-        Span<byte> hash = stackalloc byte[16];
-        using var md5 = MD5.Create();
-        md5.TryComputeHash(Encoding.UTF8.GetBytes(input), hash, out _);
-        return new Guid(hash);
-    }
+    private static Guid DeterministicGuid(string input) =>
+        new Guid(System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(input)));
 }

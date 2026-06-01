@@ -20,6 +20,10 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
         services.AddSingleton<HiddenLibraryManager>();
         services.AddSingleton<SeriesPrerollFinder>();
         services.AddSingleton<TrailerFetcher>();
+        services.AddSingleton<FeatureOptOutStore>();
+        services.AddSingleton<PostRollService>();
+        services.AddSingleton<ComingSoonPicker>();
+        services.AddSingleton<LoudnessAnalyzer>();
         services.AddSingleton<PrerollSelector>(sp =>
             new PrerollSelector(sp.GetService<CooldownStore>()));
         services.AddSingleton<IIntroProvider, PrerollIntroProvider>();

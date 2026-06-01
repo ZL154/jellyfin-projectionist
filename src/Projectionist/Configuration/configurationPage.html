@@ -443,13 +443,92 @@
 
                 .pjt-validation-ok { color: var(--pjt-success); }
                 .pjt-validation-bad { color: var(--pjt-warn); }
+
+                /* === v1.2.0 additions === */
+                .pjt-v12-card {
+                    border-color: var(--pjt-border-hot);
+                }
+                .pjt-subcard {
+                    background: var(--pjt-surface-alt);
+                    border: 1px solid var(--pjt-border);
+                    border-radius: 5px;
+                    padding: 16px;
+                    margin-top: 14px;
+                }
+                .pjt-subcard:first-of-type { margin-top: 8px; }
+                .pjt-subcard h3 {
+                    margin: 0 0 4px 0;
+                    font-size: 14px;
+                    font-weight: 600;
+                    color: var(--pjt-text);
+                    letter-spacing: 0.01em;
+                }
+                .pjt-subcard .pjt-section-hint {
+                    color: var(--pjt-text-dim);
+                    font-size: 11px;
+                    margin-bottom: 14px;
+                }
+                .pjt-optout-list {
+                    border: 1px solid var(--pjt-border);
+                    border-radius: 4px;
+                    max-height: 200px;
+                    overflow: auto;
+                    background: #0e1014;
+                    margin-bottom: 10px;
+                }
+                .pjt-optout-row {
+                    display: grid;
+                    grid-template-columns: 1fr auto;
+                    gap: 12px;
+                    align-items: center;
+                    padding: 8px 12px;
+                    border-bottom: 1px solid var(--pjt-border);
+                    font-family: var(--pjt-mono);
+                    font-size: 11px;
+                }
+                .pjt-optout-row:last-child { border-bottom: 0; }
+                .pjt-optout-row .pjt-guid {
+                    color: var(--pjt-text-dim);
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                }
+                .pjt-loudness-table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin-top: 12px;
+                    font-family: var(--pjt-mono);
+                    font-size: 11px;
+                    background: #0e1014;
+                    border: 1px solid var(--pjt-border);
+                    border-radius: 4px;
+                    overflow: hidden;
+                }
+                .pjt-loudness-table th,
+                .pjt-loudness-table td {
+                    text-align: left;
+                    padding: 8px 12px;
+                    border-bottom: 1px solid var(--pjt-border);
+                }
+                .pjt-loudness-table th {
+                    color: var(--pjt-text-mute);
+                    font-size: 10px;
+                    text-transform: uppercase;
+                    letter-spacing: 0.06em;
+                    font-weight: 600;
+                    background: var(--pjt-surface-alt);
+                }
+                .pjt-loudness-table tr:last-child td { border-bottom: 0; }
+                .pjt-loudness-table .pjt-flagged {
+                    color: var(--pjt-warn);
+                }
             </style>
 
             <div id="pjt-root" class="pjt-corner">
 
                 <div class="pjt-header">
                     <h1>Projectionist</h1>
-                    <span class="pjt-version">v1.1.0</span>
+                    <span class="pjt-version">v1.2.0</span>
                 </div>
                 <div class="pjt-tagline">
                     Plays preroll videos before movies and episodes. Folder-based — no Jellyfin library required.
@@ -773,6 +852,145 @@
                     </div>
                 </div>
 
+                <div class="pjt-divider-label">v1.2.0</div>
+
+                <div class="pjt-card pjt-v12-card">
+                    <h2>v1.2.0 features</h2>
+                    <div class="pjt-section-hint">New in v1.2.0 — per-item opt-out, cinema overlay, coming-soon trailers, post-roll outros, and audio loudness analysis. Existing behaviour is unchanged unless you enable these.</div>
+
+                    <!-- 1. Per-feature opt-out -->
+                    <div class="pjt-subcard">
+                        <h3>Per-feature opt-out</h3>
+                        <div class="pjt-section-hint">List of Jellyfin item Guids that should never get a preroll. Useful for kids' films, sensitive content, or items where prerolls feel out of place.</div>
+
+                        <div class="pjt-optout-list" id="pjt-optout-list">
+                            <div class="pjt-empty" style="padding:18px;">No opted-out items.</div>
+                        </div>
+
+                        <div style="display:flex; gap:8px;">
+                            <input class="pjt-input" id="pjt-optout-input" placeholder="e.g. 1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p" style="flex:1; font-family:var(--pjt-mono); font-size:11px;" />
+                            <button type="button" class="pjt-btn" id="pjt-optout-add" style="white-space:nowrap;">+ Add Guid</button>
+                        </div>
+                        <div class="pjt-hint">Paste a Jellyfin item Guid (32 hex chars, with or without dashes).</div>
+                    </div>
+
+                    <!-- 2. Cinema countdown overlay -->
+                    <div class="pjt-subcard">
+                        <h3>Cinema countdown overlay</h3>
+                        <div class="pjt-section-hint">Show a brief countdown overlay between the last preroll and the feature, like the leader on a film reel.</div>
+
+                        <div class="pjt-checkbox-row">
+                            <input type="checkbox" id="pjt-countdown-enabled" />
+                            <label for="pjt-countdown-enabled">
+                                <span class="pjt-cb-title">Enable countdown overlay</span>
+                                <span class="pjt-cb-hint">Plays right before the feature starts.</span>
+                            </label>
+                        </div>
+
+                        <div class="pjt-row">
+                            <label class="pjt-label" for="pjt-countdown-duration">Countdown duration (seconds)</label>
+                            <input class="pjt-input" id="pjt-countdown-duration" type="number" min="3" max="10" />
+                            <div class="pjt-hint">3–10 seconds.</div>
+                        </div>
+
+                        <div class="pjt-checkbox-row">
+                            <input type="checkbox" id="pjt-countdown-title" />
+                            <label for="pjt-countdown-title">
+                                <span class="pjt-cb-title">Show feature title under countdown</span>
+                                <span class="pjt-cb-hint">"Now showing: …" beneath the number.</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- 3. Coming-soon trailers -->
+                    <div class="pjt-subcard">
+                        <h3>Coming-soon trailers</h3>
+                        <div class="pjt-section-hint">Play trailers for other items in your library before the feature — like a real cinema preview reel.</div>
+
+                        <div class="pjt-checkbox-row">
+                            <input type="checkbox" id="pjt-comingsoon-enabled" />
+                            <label for="pjt-comingsoon-enabled">
+                                <span class="pjt-cb-title">Enable coming-soon trailers</span>
+                                <span class="pjt-cb-hint">Pulled from other items' local trailers.</span>
+                            </label>
+                        </div>
+
+                        <div class="pjt-row">
+                            <label class="pjt-label" for="pjt-comingsoon-count">Coming-soon trailers per playback</label>
+                            <input class="pjt-input" id="pjt-comingsoon-count" type="number" min="1" max="3" />
+                            <div class="pjt-hint">1–3.</div>
+                        </div>
+                    </div>
+
+                    <!-- 4. Post-roll / Outro -->
+                    <div class="pjt-subcard">
+                        <h3>Post-roll / Outro</h3>
+                        <div class="pjt-section-hint">Files played <em>after</em> the feature finishes — credits stings, channel idents, "thanks for watching" cards.</div>
+
+                        <div class="pjt-row">
+                            <label class="pjt-label" for="pjt-postroll-path">Post-roll folder path</label>
+                            <input class="pjt-input" id="pjt-postroll-path" placeholder="/path/to/your/postrolls" />
+                            <div class="pjt-hint">Separate from your main preroll folder.</div>
+                        </div>
+
+                        <div class="pjt-row">
+                            <label class="pjt-label" for="pjt-postroll-count">Post-rolls per playback</label>
+                            <input class="pjt-input" id="pjt-postroll-count" type="number" min="0" max="5" />
+                            <div class="pjt-hint">0 disables. 1–5 chains files after the feature.</div>
+                        </div>
+
+                        <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+                            <button type="button" class="pjt-btn" id="pjt-postroll-list-btn">List post-rolls</button>
+                            <span id="pjt-postroll-list-result" style="font-family:var(--pjt-mono);font-size:11px;color:var(--pjt-text-mute);"></span>
+                        </div>
+                    </div>
+
+                    <!-- 5. Audio loudness analysis -->
+                    <div class="pjt-subcard">
+                        <h3>Audio loudness analysis</h3>
+                        <div class="pjt-section-hint">Flag prerolls that are noticeably louder or quieter than the rest of your pool. A loud preroll before a quiet film makes everyone reach for the remote.</div>
+
+                        <div class="pjt-checkbox-row">
+                            <input type="checkbox" id="pjt-loudness-enabled" />
+                            <label for="pjt-loudness-enabled">
+                                <span class="pjt-cb-title">Enable loudness analysis</span>
+                                <span class="pjt-cb-hint">Runs ffmpeg loudnorm pass on each preroll.</span>
+                            </label>
+                        </div>
+
+                        <div class="pjt-row">
+                            <label class="pjt-label" for="pjt-loudness-threshold">Warning threshold (dB deviation from pool mean)</label>
+                            <input class="pjt-input" id="pjt-loudness-threshold" type="number" min="0" />
+                            <div class="pjt-hint">Default 6 dB. Files outside ±threshold of the pool's mean are flagged.</div>
+                        </div>
+
+                        <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+                            <button type="button" class="pjt-btn" id="pjt-loudness-analyze">Analyze now</button>
+                            <span id="pjt-loudness-status" style="font-family:var(--pjt-mono);font-size:11px;color:var(--pjt-text-mute);"></span>
+                        </div>
+
+                        <div id="pjt-loudness-result-wrap" style="display:none;">
+                            <table class="pjt-loudness-table" id="pjt-loudness-table">
+                                <thead>
+                                    <tr>
+                                        <th>File name</th>
+                                        <th>Mean dB</th>
+                                        <th>Deviation</th>
+                                        <th>Flagged</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="pjt-loudness-tbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- 6. Genre matching hint -->
+                    <div class="pjt-subcard">
+                        <h3>Genre matching in library rules</h3>
+                        <div class="pjt-section-hint">Each row in the "Library rules" card above now has an extra "Match genres" field. Enter comma-separated genres (e.g. <code>Horror, Thriller</code>) to restrict a rule to items in those genres. Leave empty to match any genre.</div>
+                    </div>
+                </div>
+
                 <div class="pjt-actions">
                     <button type="button" class="pjt-btn pjt-btn-primary" id="pjt-save">Save</button>
                     <button type="button" class="pjt-btn" id="pjt-reload">Discard changes</button>
@@ -867,7 +1085,8 @@
             users: [],            // [{Id, Name}]
             selectedUserIds: [],
             folders: [],          // [{Path, Name, DefaultTags:[]}]
-            rules: [],            // [{LibraryName, ItemType, RequireTags:[], ExcludeTags:[], Disabled}]
+            rules: [],            // [{LibraryName, ItemType, RequireTags:[], ExcludeTags:[], MatchGenres:[], Disabled}]
+            optOuts: [],          // [guid strings] (v1.2.0)
         };
 
         function renderUsers() {
@@ -967,6 +1186,7 @@
                   + '</select>'
                   + '<input type="text" placeholder="require: tag,tag" value="' + escapeHtml((r.RequireTags || []).join(',')) + '" data-i="' + i + '" data-k="RequireTags" style="max-width:140px;" />'
                   + '<input type="text" placeholder="exclude: tag,tag" value="' + escapeHtml((r.ExcludeTags || []).join(',')) + '" data-i="' + i + '" data-k="ExcludeTags" style="max-width:140px;" />'
+                  + '<input type="text" placeholder="match genres: csv" value="' + escapeHtml((r.MatchGenres || []).join(',')) + '" data-i="' + i + '" data-k="MatchGenres" style="max-width:160px;" title="Comma-separated genres. Leave empty to match any." />'
                   + '<label style="font-size:11px;color:var(--pjt-text-mute);display:flex;align-items:center;gap:4px;"><input type="checkbox" data-i="' + i + '" data-k="Disabled" ' + (r.Disabled ? 'checked' : '') + ' />off</label>'
                   + '<button type="button" class="pjt-mini-btn" data-rm="' + i + '">Remove</button>';
                 container.appendChild(row);
@@ -978,7 +1198,7 @@
                     var k = inp.getAttribute('data-k');
                     if (!state.rules[i]) return;
                     if (inp.type === 'checkbox') state.rules[i][k] = inp.checked;
-                    else if (k === 'RequireTags' || k === 'ExcludeTags')
+                    else if (k === 'RequireTags' || k === 'ExcludeTags' || k === 'MatchGenres')
                         state.rules[i][k] = inp.value.split(',').map(function(s){return s.trim();}).filter(Boolean);
                     else state.rules[i][k] = inp.value;
                 });
@@ -992,7 +1212,7 @@
         }
 
         function addRule() {
-            state.rules.push({ LibraryName: '', ItemType: '', RequireTags: [], ExcludeTags: [], Disabled: false });
+            state.rules.push({ LibraryName: '', ItemType: '', RequireTags: [], ExcludeTags: [], MatchGenres: [], Disabled: false });
             renderRules();
         }
 
@@ -1013,9 +1233,27 @@
                 var html = '';
                 for (var i = 0; i < Math.min(50, files.length); i++) {
                     var f = files[i];
-                    html += '<div class="pjt-preroll-item">'
+                    var skipCount = pick(f, 'SkipCount', 0);
+                    var avgSkipSec = pick(f, 'AvgSkipSeconds', 0);
+                    var skipRateRaw = pick(f, 'SkipRate', null);
+                    var skipRate;
+                    if (skipRateRaw == null) {
+                        var plays = pick(f, 'PlayCount', 0);
+                        skipRate = plays > 0 ? (skipCount / plays) : 0;
+                    } else {
+                        skipRate = Number(skipRateRaw) || 0;
+                    }
+                    // SkipRate may come back as fraction (0..1) or already percent.
+                    // Treat >1 as already-percent, otherwise treat as fraction.
+                    var skipPct = (skipRate > 1 ? skipRate : skipRate * 100);
+                    var avgSkipStr = (Number(avgSkipSec) || 0).toFixed(1) + 's';
+                    var skipPctStr = skipPct.toFixed(1) + '%';
+                    html += '<div class="pjt-preroll-item" style="grid-template-columns:1fr auto auto auto auto auto;">'
                           +   '<div class="pjt-preroll-name">' + escapeHtml(pick(f,'FileName','')) + '</div>'
                           +   '<div class="pjt-preroll-meta">' + pick(f,'PlayCount',0) + ' plays</div>'
+                          +   '<div class="pjt-preroll-meta">skips: ' + skipCount + '</div>'
+                          +   '<div class="pjt-preroll-meta">avg skip: ' + avgSkipStr + '</div>'
+                          +   '<div class="pjt-preroll-meta">skip rate: ' + skipPctStr + '</div>'
                           +   '<div class="pjt-preroll-meta">' + new Date(pick(f,'LastPlayedUtc',null)).toLocaleString() + '</div>'
                           + '</div>';
                 }
@@ -1117,8 +1355,11 @@
                 // Folders
                 state.folders = pick(cfg, 'Folders', []) || [];
                 renderFolders();
-                // Library rules
-                state.rules = pick(cfg, 'LibraryRules', []) || [];
+                // Library rules — normalise MatchGenres so older configs don't blow up
+                state.rules = (pick(cfg, 'LibraryRules', []) || []).map(function(r) {
+                    r.MatchGenres = pick(r, 'MatchGenres', []) || [];
+                    return r;
+                });
                 renderRules();
                 // Series + trailers + skip
                 $('pjt-series-enabled').checked = !!pick(cfg, 'EnableSeriesPrerolls', true);
@@ -1131,9 +1372,32 @@
                 var preloadMode = parseEnum(pick(cfg, 'FeaturePreloadMode', preloadFallback), preloadModeNames);
                 if (preloadFallback === 1 && preloadMode === 0) preloadMode = 1;
                 $('pjt-preload-mode').value = String(preloadMode);
+
+                // ----- v1.2.0 fields -----
+                $('pjt-countdown-enabled').checked = !!pick(cfg, 'EnableCountdownOverlay', false);
+                var cdDur = pick(cfg, 'CountdownDurationSeconds', 5);
+                if (cdDur < 3) cdDur = 3;
+                if (cdDur > 10) cdDur = 10;
+                $('pjt-countdown-duration').value = cdDur;
+                $('pjt-countdown-title').checked = !!pick(cfg, 'CountdownShowFeatureTitle', true);
+
+                $('pjt-comingsoon-enabled').checked = !!pick(cfg, 'EnableComingSoonTrailers', false);
+                var csCount = pick(cfg, 'ComingSoonTrailerCount', 1);
+                if (csCount < 1) csCount = 1;
+                if (csCount > 3) csCount = 3;
+                $('pjt-comingsoon-count').value = csCount;
+
+                $('pjt-postroll-path').value = pick(cfg, 'PostRollFolderPath', '') || '';
+                $('pjt-postroll-count').value = pick(cfg, 'PostRollCount', 0);
+
+                $('pjt-loudness-enabled').checked = !!pick(cfg, 'EnableLoudnessAnalysis', false);
+                $('pjt-loudness-threshold').value = pick(cfg, 'LoudnessWarningThresholdDb', 6);
+
                 refreshDiscovery();
                 refreshStats();
                 runValidation();
+                // Load opt-outs separately (own endpoint)
+                refreshOptOuts();
             }).catch(function(err) {
                 console.error('[Projectionist] config load failed', err);
                 toast('Failed to load config', true);
@@ -1144,6 +1408,25 @@
             var movieSessionMode = parseInt($('pjt-movie-session-select').value, 10) || 0;
             var episodeSessionMode = parseInt($('pjt-episode-session-select').value, 10) || 0;
             var preloadMode = parseInt($('pjt-preload-mode').value, 10) || 0;
+
+            // v1.2.0 numeric clamps
+            var cdDur = parseInt($('pjt-countdown-duration').value, 10);
+            if (isNaN(cdDur)) cdDur = 5;
+            if (cdDur < 3) cdDur = 3;
+            if (cdDur > 10) cdDur = 10;
+
+            var csCount = parseInt($('pjt-comingsoon-count').value, 10);
+            if (isNaN(csCount)) csCount = 1;
+            if (csCount < 1) csCount = 1;
+            if (csCount > 3) csCount = 3;
+
+            var prCount = parseInt($('pjt-postroll-count').value, 10);
+            if (isNaN(prCount) || prCount < 0) prCount = 0;
+            if (prCount > 5) prCount = 5;
+
+            var loudThresh = parseInt($('pjt-loudness-threshold').value, 10);
+            if (isNaN(loudThresh) || loudThresh < 0) loudThresh = 6;
+
             return {
                 PrerollFolderPath: $('pjt-folder').value.trim(),
                 AllowedExtensions: $('pjt-extensions').value.trim() || '.mp4,.mkv,.mov,.webm,.avi,.m4v',
@@ -1165,9 +1448,18 @@
                 CooldownHoursPerItem: parseInt($('pjt-cooldown').value, 10) || 0,
                 UserMode: parseInt($('pjt-user-mode').value, 10) || 0,
                 UserIds: state.selectedUserIds || [],
-                // Multi-folder + rules
+                // Multi-folder + rules (rules now carry MatchGenres)
                 Folders: state.folders || [],
-                LibraryRules: state.rules || [],
+                LibraryRules: (state.rules || []).map(function(r) {
+                    return {
+                        LibraryName: r.LibraryName || '',
+                        ItemType: r.ItemType || '',
+                        RequireTags: r.RequireTags || [],
+                        ExcludeTags: r.ExcludeTags || [],
+                        MatchGenres: r.MatchGenres || [],
+                        Disabled: !!r.Disabled
+                    };
+                }),
                 // Per-series + trailers + skip
                 EnableSeriesPrerolls: $('pjt-series-enabled').checked,
                 SeriesPrerollFileName: $('pjt-series-name').value || 'theme-preroll',
@@ -1177,7 +1469,18 @@
                 SkippableAfterSeconds: parseInt($('pjt-skip-after').value, 10) || 0,
                 EnableFeaturePreload: preloadMode !== 0,
                 FeaturePreloadMode: preloadMode,
-                EnableStatsTracking: true
+                EnableStatsTracking: true,
+
+                // v1.2.0
+                EnableCountdownOverlay: $('pjt-countdown-enabled').checked,
+                CountdownDurationSeconds: cdDur,
+                CountdownShowFeatureTitle: $('pjt-countdown-title').checked,
+                EnableComingSoonTrailers: $('pjt-comingsoon-enabled').checked,
+                ComingSoonTrailerCount: csCount,
+                PostRollFolderPath: $('pjt-postroll-path').value.trim(),
+                PostRollCount: prCount,
+                EnableLoudnessAnalysis: $('pjt-loudness-enabled').checked,
+                LoudnessWarningThresholdDb: loudThresh
             };
         }
 
@@ -1329,6 +1632,161 @@
             }).catch(function() { toast('Remove failed', true); });
         }
 
+        // ===== v1.2.0 logic =====
+
+        function renderOptOuts() {
+            var list = $('pjt-optout-list');
+            if (!list) return;
+            if (!state.optOuts || !state.optOuts.length) {
+                list.innerHTML = '<div class="pjt-empty" style="padding:18px;">No opted-out items.</div>';
+                return;
+            }
+            var html = '';
+            for (var i = 0; i < state.optOuts.length; i++) {
+                var g = state.optOuts[i];
+                html += '<div class="pjt-optout-row">'
+                     +    '<div class="pjt-guid" title="' + escapeHtml(g) + '">' + escapeHtml(g) + '</div>'
+                     +    '<button type="button" class="pjt-mini-btn" data-rm-guid="' + escapeHtml(g) + '">Remove</button>'
+                     +  '</div>';
+            }
+            list.innerHTML = html;
+            list.querySelectorAll('button[data-rm-guid]').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    removeOptOut(btn.getAttribute('data-rm-guid'));
+                });
+            });
+        }
+
+        function refreshOptOuts() {
+            api('OptOuts').then(function(res) {
+                // Accept array of strings, array of objects with Guid/Id, or { Items: [...] }
+                var items;
+                if (Array.isArray(res)) items = res;
+                else if (res && Array.isArray(res.Items)) items = res.Items;
+                else if (res && Array.isArray(res.items)) items = res.items;
+                else items = [];
+                state.optOuts = items.map(function(x) {
+                    if (typeof x === 'string') return x;
+                    return pick(x, 'Guid', null) || pick(x, 'Id', null) || pick(x, 'ItemId', null) || String(x);
+                }).filter(Boolean);
+                renderOptOuts();
+            }).catch(function(err) {
+                console.warn('[Projectionist] opt-outs load failed', err);
+                state.optOuts = [];
+                renderOptOuts();
+            });
+        }
+
+        function addOptOut() {
+            var inp = $('pjt-optout-input');
+            var raw = (inp.value || '').trim();
+            if (!raw) { toast('Enter a Guid first', true); return; }
+            // Light normalization — strip braces/spaces, keep hex+dashes
+            var guid = raw.replace(/[{}\s]/g, '');
+            if (!/^[0-9a-fA-F-]{32,36}$/.test(guid)) {
+                toast('That doesn\'t look like a Guid', true);
+                return;
+            }
+            api('OptOut/' + encodeURIComponent(guid), { method: 'POST', expectJson: false })
+                .then(function() {
+                    toast('Added opt-out');
+                    inp.value = '';
+                    refreshOptOuts();
+                })
+                .catch(function(err) {
+                    console.error('[Projectionist] opt-out add failed', err);
+                    toast('Add failed', true);
+                });
+        }
+
+        function removeOptOut(guid) {
+            if (!guid) return;
+            // Try DELETE first; backend should implement either DELETE or POST to a remove path.
+            api('OptOut/' + encodeURIComponent(guid), { method: 'DELETE', expectJson: false })
+                .then(function() {
+                    toast('Removed opt-out');
+                    refreshOptOuts();
+                })
+                .catch(function(err) {
+                    console.error('[Projectionist] opt-out remove failed', err);
+                    toast('Remove failed', true);
+                });
+        }
+
+        function listPostRolls() {
+            var resultEl = $('pjt-postroll-list-result');
+            resultEl.textContent = 'Listing…';
+            api('PostRoll/Files').then(function(res) {
+                var files;
+                if (Array.isArray(res)) files = res;
+                else if (res && Array.isArray(res.Files)) files = res.Files;
+                else if (res && Array.isArray(res.files)) files = res.files;
+                else if (res && typeof pick(res, 'Count', null) === 'number') {
+                    resultEl.textContent = pick(res, 'Count', 0) + ' post-roll file(s) found.';
+                    return;
+                }
+                else files = [];
+                resultEl.textContent = files.length + ' post-roll file(s) found.';
+            }).catch(function(err) {
+                console.error('[Projectionist] post-roll list failed', err);
+                resultEl.textContent = '';
+                toast('Post-roll list failed', true);
+            });
+        }
+
+        function renderLoudnessResult(items) {
+            var wrap = $('pjt-loudness-result-wrap');
+            var tbody = $('pjt-loudness-tbody');
+            if (!items || !items.length) {
+                wrap.style.display = 'none';
+                tbody.innerHTML = '';
+                return;
+            }
+            var html = '';
+            for (var i = 0; i < items.length; i++) {
+                var it = items[i];
+                var fn = pick(it, 'FileName', pick(it, 'Name', ''));
+                var meanRaw = pick(it, 'MeanDb', pick(it, 'Mean', null));
+                var devRaw = pick(it, 'Deviation', null);
+                var flagged = !!pick(it, 'Flagged', false);
+                var meanStr = (meanRaw == null || isNaN(Number(meanRaw))) ? '—' : Number(meanRaw).toFixed(1) + ' dB';
+                var devStr;
+                if (devRaw == null || isNaN(Number(devRaw))) devStr = '—';
+                else {
+                    var d = Number(devRaw);
+                    devStr = (d >= 0 ? '+' : '') + d.toFixed(1) + ' dB';
+                }
+                html += '<tr' + (flagged ? ' class="pjt-flagged"' : '') + '>'
+                     +    '<td>' + escapeHtml(fn) + '</td>'
+                     +    '<td>' + escapeHtml(meanStr) + '</td>'
+                     +    '<td>' + escapeHtml(devStr) + '</td>'
+                     +    '<td>' + (flagged ? 'Yes' : 'No') + '</td>'
+                     +  '</tr>';
+            }
+            tbody.innerHTML = html;
+            wrap.style.display = '';
+        }
+
+        function analyzeLoudness() {
+            var statusEl = $('pjt-loudness-status');
+            statusEl.textContent = 'Analyzing… this may take a while.';
+            api('Loudness/Analyze', { method: 'POST' }).then(function(res) {
+                statusEl.textContent = 'Done.';
+                var items;
+                if (Array.isArray(res)) items = res;
+                else if (res && Array.isArray(res.Files)) items = res.Files;
+                else if (res && Array.isArray(res.Items)) items = res.Items;
+                else if (res && Array.isArray(res.Results)) items = res.Results;
+                else items = [];
+                renderLoudnessResult(items);
+                if (!items.length) statusEl.textContent = 'No results returned.';
+            }).catch(function(err) {
+                console.error('[Projectionist] loudness analyze failed', err);
+                statusEl.textContent = 'Analysis failed.';
+                toast('Analysis failed', true);
+            });
+        }
+
         var pageEl = document.querySelector('#ProjectionistConfigPage');
         if (pageEl) pageEl.addEventListener('pageshow', function() {
             fetchUsers(); loadConfig(); refreshLibraryStatus(); refreshStats(); runValidation();
@@ -1355,6 +1813,19 @@
         $('pjt-mode-select').addEventListener('change', function() {
             $('pjt-stat-mode').textContent = modeLabel(parseInt($('pjt-mode-select').value, 10));
         });
+
+        // v1.2.0 wiring
+        var optAddBtn = $('pjt-optout-add');
+        if (optAddBtn) optAddBtn.addEventListener('click', addOptOut);
+        var optInput = $('pjt-optout-input');
+        if (optInput) optInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') { e.preventDefault(); addOptOut(); }
+        });
+        var prBtn = $('pjt-postroll-list-btn');
+        if (prBtn) prBtn.addEventListener('click', listPostRolls);
+        var loudBtn = $('pjt-loudness-analyze');
+        if (loudBtn) loudBtn.addEventListener('click', analyzeLoudness);
+
         // attempt initial load even without pageshow
         loadConfig();
     })();

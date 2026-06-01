@@ -99,6 +99,7 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
     var prerollPaths = new Set();
     var prerollIds = new Set();
     var prerollNames = new Set();
+    var currentPrerollFileName = null;
     window.__projectionistSettings = window.__projectionistSettings || { featurePreloadEnabled: false, featurePreloadMode: 0 };
 
     function tryRequire(name) {
@@ -182,8 +183,25 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
         if (name) prerollNames.add(name);
     };
 
+    function getApiClientLocal() {
+        if (window.ApiClient) return window.ApiClient;
+        if (window.connectionManager && typeof connectionManager.currentApiClient === 'function') {
+            return connectionManager.currentApiClient();
+        }
+        return null;
+    }
+
+    function getOverlayHost() {
+        return document.fullscreenElement
+            || document.webkitFullscreenElement
+            || document.querySelector('.videoPlayerContainer')
+            || document.querySelector('.htmlVideoPlayerContainer')
+            || document.body;
+    }
+
     function showButton() {
         ensureStyle();
+        var host = getOverlayHost();
         var btn = document.getElementById(BTN_ID);
         if (!btn) {
             btn = document.createElement('button');
@@ -191,13 +209,29 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
             btn.textContent = 'Skip';
             btn.addEventListener('click', function () {
                 try {
+                    // Skip-rate reporting: capture currentTime and POST before skipping.
+                    try {
+                        var video = document.querySelector('video');
+                        var seconds = video ? Math.round(video.currentTime * 10) / 10 : 0;
+                        var ac = getApiClientLocal();
+                        if (ac && currentPrerollFileName) {
+                            fetch('/Plugins/Projectionist/SkipReport', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'X-Emby-Token': ac.accessToken(),
+                                },
+                                body: JSON.stringify({ fileName: currentPrerollFileName, secondsBeforeSkip: seconds }),
+                            }).catch(function () {});
+                        }
+                    } catch (_) {}
                     var pm = getPlaybackManager();
                     if (pm && typeof pm.nextTrack === 'function') pm.nextTrack();
                     else if (pm && typeof pm.stop === 'function') pm.stop();
                 } catch (_) {}
             });
-            document.body.appendChild(btn);
         }
+        if (btn.parentNode !== host) host.appendChild(btn);
         btn.classList.remove('pjt-hidden');
     }
     function hideButton() {
@@ -212,15 +246,43 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
             setTimeout(attachSkipWatcher, 400);
             return;
         }
+        // Install a one-time fullscreenchange hook so the skip button gets
+        // reparented into document.fullscreenElement whenever the player
+        // toggles fullscreen. Without this, a body-parented button is not
+        // painted while the video element is fullscreen.
+        if (!window.__pjtFsHooked) {
+            window.__pjtFsHooked = true;
+            var reparent = function () {
+                var btn = document.getElementById(BTN_ID);
+                if (!btn) return;
+                var host = getOverlayHost();
+                if (btn.parentNode !== host) host.appendChild(btn);
+            };
+            document.addEventListener('fullscreenchange', reparent);
+            document.addEventListener('webkitfullscreenchange', reparent);
+        }
         var revealTimer = null;
         events.on(pm, 'playbackstart', function (e, player) {
             if (revealTimer) { clearTimeout(revealTimer); revealTimer = null; }
             try {
                 var item = pm.currentItem(player);
                 if (!isPrerollItem(item) || !enabled) {
+                    currentPrerollFileName = null;
                     hideButton();
                     return;
                 }
+                // Track filename for skip-rate reporting.
+                try {
+                    if (item) {
+                        if (item.Path) {
+                            var p = String(item.Path);
+                            var slash = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+                            currentPrerollFileName = slash >= 0 ? p.substring(slash + 1) : p;
+                        } else if (item.Name) {
+                            currentPrerollFileName = item.Name;
+                        }
+                    }
+                } catch (_) {}
                 if (minSkipSeconds > 0) {
                     revealTimer = setTimeout(showButton, minSkipSeconds * 1000);
                 } else {
@@ -230,8 +292,15 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
         });
         events.on(pm, 'playbackstop', function () {
             hideButton();
+            currentPrerollFileName = null;
             if (revealTimer) { clearTimeout(revealTimer); revealTimer = null; }
         });
+        // itemchange: when playback advances to the next item, clear the
+        // tracked filename — it will be re-set on the next playbackstart if
+        // the new item is also a preroll.
+        try {
+            events.on(pm, 'itemchange', function () { currentPrerollFileName = null; });
+        } catch (_) {}
     }
     attachSkipWatcher();
 })();
@@ -536,6 +605,14 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
             }
 
             return itemPromise.then(function (item) {
+                // Cache the upcoming feature title so the countdown overlay
+                // can display it. Set for both Movie and Episode branches.
+                try {
+                    if (item) {
+                        window.__projectionistUpcomingFeatureTitle =
+                            item.Name || item.SeriesName || '';
+                    }
+                } catch (_) {}
                 if (!isEpisode(item)) {
                     if (!isVideoFeature(item)) return origPlay(options);
                     return fetchIntros(apiClient, item.Id || firstId).then(function (intros) {
@@ -613,4 +690,194 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
     }
 
     waitForPlaybackManager(patch);
+})();
+
+// ============== Cinema countdown overlay (MVP) ==============
+// When playbackstart fires AND the current item is a preroll AND
+// config.EnableCountdownOverlay is true, render a 5-4-3-2-1 numeral overlay
+// with the upcoming feature title. Auto-removes after
+// config.CountdownDurationSeconds seconds.
+(function () {
+    'use strict';
+    var OVERLAY_ID = 'pjt-countdown';
+    var countdownEnabled = false;
+    var countdownDuration = 5;
+    var configLoaded = false;
+
+    function tryRequire(name) {
+        try {
+            if (window.require) return window.require(name);
+            if (window.RequireJS) return window.RequireJS(name);
+        } catch (_) {}
+        return null;
+    }
+
+    function getPlaybackManager() {
+        return window.playbackManager || tryRequire('playbackManager');
+    }
+
+    function getEvents() {
+        return window.Events || tryRequire('events') || tryRequire('Events');
+    }
+
+    function getApiClient() {
+        if (window.ApiClient) return window.ApiClient;
+        if (window.connectionManager && typeof connectionManager.currentApiClient === 'function') {
+            return connectionManager.currentApiClient();
+        }
+        return null;
+    }
+
+    function loadConfig() {
+        try {
+            var ac = getApiClient();
+            if (!ac) return;
+            ac.fetch({ url: ac.getUrl('Plugins/Projectionist/Config'), type: 'GET', dataType: 'json' })
+                .then(function (cfg) {
+                    if (!cfg) return;
+                    configLoaded = true;
+                    countdownEnabled = (cfg.EnableCountdownOverlay !== undefined
+                        ? cfg.EnableCountdownOverlay
+                        : cfg.enableCountdownOverlay) === true;
+                    var dur = (cfg.CountdownDurationSeconds !== undefined
+                        ? cfg.CountdownDurationSeconds
+                        : cfg.countdownDurationSeconds);
+                    if (typeof dur === 'number' && dur > 0) countdownDuration = dur;
+                })
+                .catch(function () {});
+        } catch (_) {}
+    }
+    loadConfig();
+
+    function isPrerollItem(item) {
+        if (!item) return false;
+        if (item.SeriesName === 'Projectionist Prerolls' ||
+            item.ParentName === 'Projectionist Prerolls' ||
+            item.CollectionName === 'Projectionist Prerolls') return true;
+        // Defer to the skip-button IIFE's tracker if exposed via globals.
+        try {
+            // The skip-button IIFE marks prerolls via window.__projectionistMarkPreroll;
+            // there's no readable mirror, so fall back to library-name heuristic only.
+        } catch (_) {}
+        return false;
+    }
+
+    function renderCountdown() {
+        try {
+            var existing = document.getElementById(OVERLAY_ID);
+            if (existing) existing.remove();
+            var overlay = document.createElement('div');
+            overlay.id = OVERLAY_ID;
+            overlay.style.cssText =
+                'position:fixed;top:0;left:0;width:100vw;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);z-index:99999;color:#fff;font-family:sans-serif;pointer-events:none;';
+            var num = document.createElement('div');
+            num.style.cssText = 'font-size:30vw;font-weight:900;line-height:1;text-shadow:0 0 30px rgba(229,9,20,0.8);';
+            var title = document.createElement('div');
+            title.style.cssText = 'font-size:5vw;margin-top:24px;opacity:0.85;font-weight:300;';
+            title.textContent = window.__projectionistUpcomingFeatureTitle || '';
+            overlay.appendChild(num);
+            if (window.__projectionistUpcomingFeatureTitle) overlay.appendChild(title);
+            document.body.appendChild(overlay);
+            var n = countdownDuration;
+            num.textContent = n;
+            var t = setInterval(function () {
+                n--;
+                if (n < 1) { clearInterval(t); overlay.remove(); return; }
+                num.textContent = n;
+            }, 1000);
+        } catch (_) {}
+    }
+
+    function attachCountdownWatcher() {
+        var events = getEvents();
+        var pm = getPlaybackManager();
+        if (!events || !pm) {
+            setTimeout(attachCountdownWatcher, 400);
+            return;
+        }
+        events.on(pm, 'playbackstart', function (e, player) {
+            try {
+                if (!countdownEnabled) return;
+                var item = pm.currentItem(player);
+                if (!isPrerollItem(item)) return;
+                renderCountdown();
+            } catch (_) {}
+        });
+    }
+    attachCountdownWatcher();
+})();
+
+// ============== Post-roll hook (MVP) ==============
+// Listen for playbackstop on a FEATURE (not on a preroll/post-roll itself).
+// When the feature stops, fetch /Plugins/Projectionist/PostRoll/Picks and
+// log the candidate count. Actual playback requires items in the hidden
+// library and will be wired up in a future patch release.
+(function () {
+    'use strict';
+
+    function tryRequire(name) {
+        try {
+            if (window.require) return window.require(name);
+            if (window.RequireJS) return window.RequireJS(name);
+        } catch (_) {}
+        return null;
+    }
+
+    function getPlaybackManager() {
+        return window.playbackManager || tryRequire('playbackManager');
+    }
+
+    function getEvents() {
+        return window.Events || tryRequire('events') || tryRequire('Events');
+    }
+
+    function getApiClient() {
+        if (window.ApiClient) return window.ApiClient;
+        if (window.connectionManager && typeof connectionManager.currentApiClient === 'function') {
+            return connectionManager.currentApiClient();
+        }
+        return null;
+    }
+
+    function isPrerollItem(item) {
+        if (!item) return false;
+        if (item.SeriesName === 'Projectionist Prerolls' ||
+            item.ParentName === 'Projectionist Prerolls' ||
+            item.CollectionName === 'Projectionist Prerolls') return true;
+        return false;
+    }
+
+    function attachPostRoll() {
+        var events = getEvents();
+        var pm = getPlaybackManager();
+        if (!events || !pm) {
+            setTimeout(attachPostRoll, 400);
+            return;
+        }
+        events.on(pm, 'playbackstop', function (e, stopInfo) {
+            try {
+                // Guard: don't trigger if we're stopping a preroll/post-roll itself.
+                if (window.__projectionistPostRollPlaying === true) return;
+                var item = null;
+                try {
+                    if (stopInfo && stopInfo.item) item = stopInfo.item;
+                    else if (stopInfo && stopInfo.mediaInfo) item = stopInfo.mediaInfo;
+                    else if (typeof pm.currentItem === 'function') item = pm.currentItem();
+                } catch (_) {}
+                if (isPrerollItem(item)) return;
+
+                var ac = getApiClient();
+                if (!ac) return;
+                ac.fetch({ url: ac.getUrl('Plugins/Projectionist/PostRoll/Picks'), type: 'GET', dataType: 'json' })
+                    .then(function (res) {
+                        var items = (res && (res.Items || res.items)) || [];
+                        try { console.log('[Projectionist] post-roll candidates:', items.length); } catch (_) {}
+                        // MVP: log only. Future patch release will play the picks
+                        // (requires items to be addressable from the hidden library).
+                    })
+                    .catch(function () {});
+            } catch (_) {}
+        });
+    }
+    attachPostRoll();
 })();

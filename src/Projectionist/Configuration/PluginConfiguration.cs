@@ -56,6 +56,8 @@ public sealed class LibraryRule
     public List<string> RequireTags { get; set; } = new();
     /// <summary>Tags that disqualify a preroll for this rule.</summary>
     public List<string> ExcludeTags { get; set; } = new();
+    /// <summary>If non-empty, the feature must have at least one genre in this list. Case-insensitive.</summary>
+    public List<string> MatchGenres { get; set; } = new();
     /// <summary>If true, no preroll plays before items matching this rule.</summary>
     public bool Disabled { get; set; }
 }
@@ -209,4 +211,36 @@ public class PluginConfiguration : BasePluginConfiguration
     /// info; Hot also opens a small early stream request where Jellyfin exposes one.
     /// </summary>
     public FeaturePreloadMode FeaturePreloadMode { get; set; } = FeaturePreloadMode.Off;
+
+    // ---------- v1.2.0 features ----------
+
+    /// <summary>Item IDs that should NEVER trigger a preroll.</summary>
+    public List<Guid> OptedOutFeatureIds { get; set; } = new();
+
+    /// <summary>Show a 5-4-3-2-1 cinema-countdown overlay during the preroll.</summary>
+    public bool EnableCountdownOverlay { get; set; } = false;
+
+    /// <summary>How many seconds the countdown overlay should run.</summary>
+    public int CountdownDurationSeconds { get; set; } = 6;
+
+    /// <summary>Whether to show the feature title in the countdown overlay.</summary>
+    public bool CountdownShowFeatureTitle { get; set; } = true;
+
+    /// <summary>Play one or more "coming soon" trailers for an unwatched library item before the feature.</summary>
+    public bool EnableComingSoonTrailers { get; set; } = false;
+
+    /// <summary>How many coming-soon trailers to prepend.</summary>
+    public int ComingSoonTrailerCount { get; set; } = 1;
+
+    /// <summary>Path to a folder of post-roll videos. Plays AFTER the feature ends.</summary>
+    public string PostRollFolderPath { get; set; } = string.Empty;
+
+    /// <summary>Number of post-roll videos to play. 0 = post-roll disabled.</summary>
+    public int PostRollCount { get; set; } = 0;
+
+    /// <summary>If true, run ffmpeg volumedetect on each preroll for the admin loudness report.</summary>
+    public bool EnableLoudnessAnalysis { get; set; } = false;
+
+    /// <summary>Threshold in dB. Prerolls whose mean dB drifts by more than this from baseline are flagged.</summary>
+    public double LoudnessWarningThresholdDb { get; set; } = 6.0;
 }

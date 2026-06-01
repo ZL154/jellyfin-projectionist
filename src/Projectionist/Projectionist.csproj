@@ -9,7 +9,7 @@
     <LangVersion>latest</LangVersion>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <NoWarn>CS1591;CA1819;CA1308;CA1822;CA1031</NoWarn>
-    <Version>1.1.1</Version>
+    <Version>1.2.0</Version>
     <Authors>AhmedMedia</Authors>
     <Description>Plays preroll videos before movies and episodes in Jellyfin. Folder-based, episode-aware, with a properly designed admin UI.</Description>
   </PropertyGroup>

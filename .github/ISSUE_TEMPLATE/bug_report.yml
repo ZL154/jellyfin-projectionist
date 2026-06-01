@@ -1,0 +1,40 @@
+name: Bug report
+description: Something isn't working
+labels: ["bug"]
+body:
+  - type: input
+    id: jellyfin-version
+    attributes:
+      label: Jellyfin version
+      placeholder: "10.11.10"
+    validations:
+      required: true
+  - type: input
+    id: projectionist-version
+    attributes:
+      label: Projectionist version
+      placeholder: "1.2.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: client
+    attributes:
+      label: Client
+      options:
+        - Jellyfin Web (browser)
+        - Jellyfin Media Player
+        - Native client (Android TV / iOS / etc.)
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Server log excerpt (grep for "[Projectionist]")
+      render: text

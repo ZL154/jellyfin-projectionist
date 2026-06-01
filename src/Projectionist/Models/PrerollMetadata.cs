@@ -41,6 +41,11 @@ public sealed class ScheduleRule
 
     public bool Matches(DateTime nowLocal)
     {
+        foreach (var m in Months) if (m < 1 || m > 12) return false;
+        foreach (var d in DaysOfWeek) if (d < 0 || d > 6) return false;
+        if (StartHour.HasValue && (StartHour.Value < 0 || StartHour.Value > 23)) return false;
+        if (EndHour.HasValue && (EndHour.Value < 0 || EndHour.Value > 24)) return false;
+
         if (Months.Count > 0 && !Months.Contains(nowLocal.Month)) return false;
         if (DaysOfWeek.Count > 0 && !DaysOfWeek.Contains((int)nowLocal.DayOfWeek)) return false;
         if (StartHour.HasValue && nowLocal.Hour < StartHour.Value) return false;
@@ -74,6 +79,9 @@ public sealed class ScheduleRule
         month = day = 0;
         var parts = s.Trim().Split('-');
         if (parts.Length != 2) return false;
-        return int.TryParse(parts[0], out month) && int.TryParse(parts[1], out day);
+        if (!int.TryParse(parts[0], out month) || !int.TryParse(parts[1], out day)) return false;
+        if (month < 1 || month > 12) return false;
+        if (day < 1 || day > 31) return false;
+        return true;
     }
 }

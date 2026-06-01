@@ -31,6 +31,10 @@ public sealed class ProjectionistController : ControllerBase
     private readonly HiddenLibraryManager _hiddenLibrary;
     private readonly StatsStore _stats;
     private readonly IUserManager _userManager;
+    private readonly FeatureOptOutStore _optOuts;
+    private readonly PostRollService _postRoll;
+    private readonly ComingSoonPicker _comingSoon;
+    private readonly LoudnessAnalyzer _loudness;
 
     public ProjectionistController(
         ILogger<ProjectionistController> logger,
@@ -39,7 +43,11 @@ public sealed class ProjectionistController : ControllerBase
         ILibraryManager libraryManager,
         HiddenLibraryManager hiddenLibrary,
         StatsStore stats,
-        IUserManager userManager)
+        IUserManager userManager,
+        FeatureOptOutStore optOuts,
+        PostRollService postRoll,
+        ComingSoonPicker comingSoon,
+        LoudnessAnalyzer loudness)
     {
         _logger = logger;
         _discovery = discovery;
@@ -48,6 +56,10 @@ public sealed class ProjectionistController : ControllerBase
         _hiddenLibrary = hiddenLibrary;
         _stats = stats;
         _userManager = userManager;
+        _optOuts = optOuts;
+        _postRoll = postRoll;
+        _comingSoon = comingSoon;
+        _loudness = loudness;
     }
 
     /// <summary>Return the live plugin configuration.</summary>
@@ -293,6 +305,113 @@ public sealed class ProjectionistController : ControllerBase
         }));
     }
 
+    [HttpGet("OptOuts")]
+    public ActionResult<IEnumerable<Guid>> ListOptOuts()
+    {
+        return Ok(_optOuts.List());
+    }
+
+    [HttpPost("OptOut/{itemId:guid}")]
+    public ActionResult AddOptOut([FromRoute] Guid itemId)
+    {
+        _optOuts.Add(itemId);
+        return NoContent();
+    }
+
+    [HttpDelete("OptOut/{itemId:guid}")]
+    public ActionResult RemoveOptOut([FromRoute] Guid itemId)
+    {
+        _optOuts.Remove(itemId);
+        return NoContent();
+    }
+
+    [HttpPost("SkipReport")]
+    [Authorize]
+    public ActionResult RecordSkip([FromBody] SkipReportRequest req)
+    {
+        if (req is null || string.IsNullOrWhiteSpace(req.FileName)) return BadRequest("FileName required");
+        if (req.SecondsBeforeSkip < 0) req.SecondsBeforeSkip = 0;
+        _stats.RecordSkip(req.FileName, req.SecondsBeforeSkip);
+        return NoContent();
+    }
+
+    [HttpGet("PostRoll/Files")]
+    public ActionResult<IEnumerable<DiscoveryFile>> ListPostRolls()
+    {
+        var cfg = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        var items = _postRoll.Discover(cfg);
+        return Ok(items.Select(i => new DiscoveryFile
+        {
+            FileName = i.FileName,
+            Path = i.Path,
+            SizeBytes = i.FileSizeBytes,
+            LastModifiedUtc = i.LastModifiedUtc,
+            Tags = i.Tags,
+            Weight = i.Weight,
+            SourceFolder = i.SourceFolder,
+        }).ToList());
+    }
+
+    [HttpGet("PostRoll/Picks")]
+    [Authorize]
+    public ActionResult<IEnumerable<DiscoveryFile>> PickPostRolls()
+    {
+        var cfg = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        var picks = _postRoll.Pick(cfg, Math.Max(0, cfg.PostRollCount));
+        return Ok(picks.Select(i => new DiscoveryFile
+        {
+            FileName = i.FileName,
+            Path = i.Path,
+            SizeBytes = i.FileSizeBytes,
+            LastModifiedUtc = i.LastModifiedUtc,
+            Tags = i.Tags,
+            Weight = i.Weight,
+            SourceFolder = i.SourceFolder,
+        }).ToList());
+    }
+
+    [HttpPost("Loudness/Analyze")]
+    public async Task<ActionResult<LoudnessReport>> AnalyzeLoudness()
+    {
+        var cfg = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        var items = _discovery.Discover(cfg);
+        var results = new List<LoudnessAnalyzer.LoudnessResult>();
+        foreach (var item in items)
+        {
+            var r = await _loudness.AnalyzeAsync(item.Path).ConfigureAwait(false);
+            if (r is not null) results.Add(r);
+        }
+        return Ok(BuildLoudnessReport(results, cfg.LoudnessWarningThresholdDb));
+    }
+
+    [HttpGet("Loudness")]
+    public ActionResult<LoudnessReport> GetLoudness()
+    {
+        var cfg = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        var results = _loudness.Snapshot().ToList();
+        return Ok(BuildLoudnessReport(results, cfg.LoudnessWarningThresholdDb));
+    }
+
+    private static LoudnessReport BuildLoudnessReport(List<LoudnessAnalyzer.LoudnessResult> results, double thresholdDb)
+    {
+        if (results.Count == 0) return new LoudnessReport();
+        var meanBaseline = results.Select(r => r.MeanDb).Where(d => !double.IsNaN(d)).DefaultIfEmpty(0).Average();
+        return new LoudnessReport
+        {
+            BaselineMeanDb = Math.Round(meanBaseline, 2),
+            ThresholdDb = thresholdDb,
+            Files = results.Select(r => new LoudnessFileEntry
+            {
+                FileName = r.FileName,
+                MeanDb = Math.Round(r.MeanDb, 2),
+                MaxDb = Math.Round(r.MaxDb, 2),
+                DeviationFromBaselineDb = Math.Round(r.MeanDb - meanBaseline, 2),
+                Flagged = Math.Abs(r.MeanDb - meanBaseline) > thresholdDb,
+                AnalyzedUtc = r.AnalyzedUtc,
+            }).OrderByDescending(f => Math.Abs(f.DeviationFromBaselineDb)).ToList(),
+        };
+    }
+
     public sealed class DiscoveryResult
     {
         public string FolderPath { get; set; } = string.Empty;
@@ -351,5 +470,28 @@ public sealed class ProjectionistController : ControllerBase
     {
         public bool Ok { get; set; }
         public List<string> Problems { get; set; } = new();
+    }
+
+    public sealed class SkipReportRequest
+    {
+        public string FileName { get; set; } = string.Empty;
+        public double SecondsBeforeSkip { get; set; }
+    }
+
+    public sealed class LoudnessReport
+    {
+        public double BaselineMeanDb { get; set; }
+        public double ThresholdDb { get; set; }
+        public List<LoudnessFileEntry> Files { get; set; } = new();
+    }
+
+    public sealed class LoudnessFileEntry
+    {
+        public string FileName { get; set; } = string.Empty;
+        public double MeanDb { get; set; }
+        public double MaxDb { get; set; }
+        public double DeviationFromBaselineDb { get; set; }
+        public bool Flagged { get; set; }
+        public DateTime AnalyzedUtc { get; set; }
     }
 }

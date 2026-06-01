@@ -15,8 +15,14 @@
   <img src="https://img.shields.io/badge/Jellyfin-10.11%2B-0b0b0b?style=for-the-badge&labelColor=000000&color=2b2b2b" />
   <img src="https://img.shields.io/badge/Type-Plugin-E50914?style=for-the-badge&labelColor=000000&color=E50914" />
   <img src="https://img.shields.io/badge/System-Prerolls-0b0b0b?style=for-the-badge&labelColor=000000&color=2b2b2b" />
-  <img src="https://img.shields.io/badge/Version-1.0.0-0b0b0b?style=for-the-badge&labelColor=000000&color=2b2b2b" />
+  <img src="https://img.shields.io/badge/Version-1.2.0-0b0b0b?style=for-the-badge&labelColor=000000&color=2b2b2b" />
   <img src="https://img.shields.io/badge/License-MIT-0b0b0b?style=for-the-badge&labelColor=000000&color=2b2b2b" />
+</p>
+
+<p align="center">
+  <a href="https://github.com/ZL154/jellyfin-projectionist/releases/latest"><img src="https://img.shields.io/github/v/release/ZL154/jellyfin-projectionist?style=for-the-badge&labelColor=000000&color=2b2b2b" /></a>
+  <a href="https://github.com/ZL154/jellyfin-projectionist/releases"><img src="https://img.shields.io/github/downloads/ZL154/jellyfin-projectionist/total?style=for-the-badge&labelColor=000000&color=2b2b2b" /></a>
+  <a href="https://github.com/ZL154/jellyfin-projectionist/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/ZL154/jellyfin-projectionist/ci.yml?branch=main&style=for-the-badge&labelColor=000000&color=2b2b2b" /></a>
 </p>
 
 # 🎬 Projectionist for Jellyfin
@@ -32,7 +38,7 @@ A Jellyfin plugin that plays preroll videos before movies **and** TV episodes. F
 ## 📑 Table of contents
 
 - [Core features](#-core-features) — source, triggers, smart selection, advanced rules, stats
-- [Episode support](#-episode-support-its-not-trivial)
+- [Episode support](#-episode-support)
 - [Installation](#️-installation)
 - [First-time setup](#-first-time-setup)
 - [Sidecar metadata](#-sidecar-metadata-tags-weights-schedules)
@@ -152,10 +158,10 @@ Then:
 
 ### Manual install
 
-1. Download `projectionist_1.1.0.0.zip` from the [latest release](https://github.com/ZL154/jellyfin-projectionist/releases/latest).
+1. Download [`projectionist_1.2.0.0.zip`](https://github.com/ZL154/jellyfin-projectionist/releases/latest/download/projectionist_1.2.0.0.zip) from the latest release.
 2. Extract it into your Jellyfin plugins directory so the path looks like:
-   - **Docker:** `<config-volume>/plugins/Projectionist_1.1.0.0/`
-   - **Bare metal:** `<jellyfin-data>/plugins/Projectionist_1.1.0.0/`
+   - **Docker:** `<config-volume>/plugins/Projectionist_1.2.0.0/`
+   - **Bare metal:** `<jellyfin-data>/plugins/Projectionist_1.2.0.0/`
 3. Restart Jellyfin.
 4. Dashboard → Plugins → Projectionist → configure.
 
@@ -300,10 +306,11 @@ Targets Jellyfin 10.11 ABI (`Jellyfin.Controller` 10.11.0).
 
 ## 📋 Compatibility
 
-| Jellyfin | Status |
-|----------|--------|
-| 10.11.x  | ✅ tested |
-| 10.10.x  | ⚠️ untested (needs ABI bump in csproj + meta.json) |
+| Jellyfin | Status | Notes |
+|----------|--------|-------|
+| 10.11.9 - 10.11.10 | ✅ supported (v1.1.1+) | Plugin includes an ABI shim for the removal of IUserManager.Users from the interface. |
+| 10.11.0 - 10.11.8 | ✅ supported | Original target ABI. |
+| 10.10.x | ⚠️ untested | Needs ABI bump in csproj + meta.json. |
 
 **Zero hard dependencies.** Both movie and episode prerolls work out of the box on standard Jellyfin installs (Projectionist injects its episode hook via its own ASP.NET middleware).
 
@@ -315,6 +322,36 @@ https://www.iamparadox.dev/jellyfin/plugins/manifest.json
 
 Projectionist autodetects FileTransformation at runtime and uses it as a second injection path when present.
 
+
+---
+
+## 🤔 Why FileTransformation? (you probably don't need it)
+
+Projectionist ships its OWN in-process injection via an ASP.NET IStartupFilter middleware. This works out of the box in standard Jellyfin installs. The FileTransformation plugin is an OPTIONAL fallback — install it only if episode prerolls don't fire on your setup, usually a sign that a reverse proxy is caching index.html.
+
+---
+
+## ❓ FAQ & Known limitations
+
+### Does this work on Android TV / Roku / iOS native apps?
+
+Movie prerolls — yes (server-side IIntroProvider). Episode prerolls — no. The episode preroll depends on a JavaScript hook injected into Jellyfin Web's index.html. Native clients don't load the web shell, so the JS hook never runs there. Episode prerolls work in Jellyfin Web (browser) and Jellyfin Media Player (which uses the bundled web client).
+
+### Does it slow down playback start?
+
+Slightly — a few hundred milliseconds added by discovery + selection + media-source resolution. Enable Feature Preload (Warm or Hot) to mask most of that latency.
+
+### My preroll plays but the skip button never shows.
+
+Fixed in v1.2.0. Update.
+
+### The "Projectionist Prerolls" library is showing in my home view.
+
+Click "Set up library" in plugin settings to re-apply the per-user hide. Some Jellyfin upgrades reset user preferences; HideOnStartupService re-applies the hide ~8 seconds after plugin load. Hard-refresh the web client to see it.
+
+### Does this interfere with Intro Skipper or similar?
+
+No. They hook chapter detection; we hook the intro-list provider. Tested together in production.
 
 ---
 

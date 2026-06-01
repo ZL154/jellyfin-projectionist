@@ -61,11 +61,6 @@ public sealed class SeriesPrerollFinder
         return null;
     }
 
-    private static Guid DeterministicGuid(string input)
-    {
-        Span<byte> hash = stackalloc byte[16];
-        using var md5 = MD5.Create();
-        md5.TryComputeHash(Encoding.UTF8.GetBytes(input), hash, out _);
-        return new Guid(hash);
-    }
+    private static Guid DeterministicGuid(string input) =>
+        new Guid(System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(input)));
 }

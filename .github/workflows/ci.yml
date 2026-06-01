@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - '.github/workflows/ci.yml'
+      - 'Projectionist.sln'
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - name: Restore
+        run: dotnet restore
+      - name: Build
+        run: dotnet build src/Projectionist/Projectionist.csproj -c Release --no-restore -warnaserror
+      - name: Test
+        run: |
+          if [ -f tests/Projectionist.Tests/Projectionist.Tests.csproj ]; then
+            dotnet test tests/Projectionist.Tests/Projectionist.Tests.csproj --no-restore --verbosity normal
+          else
+            echo "No test project found"
+          fi

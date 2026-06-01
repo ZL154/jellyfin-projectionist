@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data;
 using Jellyfin.Database.Implementations;
@@ -32,6 +33,8 @@ public sealed class HiddenLibraryManager
     private readonly IUserManager _userManager;
     private readonly IDbContextFactory<JellyfinDbContext> _dbFactory;
     private readonly ILogger<HiddenLibraryManager> _logger;
+    private readonly SemaphoreSlim _hideLock = new(1, 1);
+
     public HiddenLibraryManager(
         ILibraryManager libraryManager,
         IUserManager userManager,
@@ -251,15 +254,13 @@ public sealed class HiddenLibraryManager
         var folder = GetLibraryRootFolder();
         if (folder is null) return null;
 
-        var fileName = Path.GetFileName(fullPath);
         try
         {
             var children = folder.GetRecursiveChildren(c => c?.Path is not null);
             if (children is null) return null;
             foreach (var c in children)
             {
-                if (PathsEqual(c.Path, fullPath) ||
-                    string.Equals(Path.GetFileName(c.Path), fileName, StringComparison.OrdinalIgnoreCase))
+                if (PathsEqual(c.Path, fullPath))
                 {
                     return c;
                 }
@@ -300,67 +301,75 @@ public sealed class HiddenLibraryManager
     /// </summary>
     public async Task HideFromAllUsersAsync()
     {
-        var existing = GetExisting();
-        if (existing is null) return;
-        if (!Guid.TryParse(existing.ItemId, out var folderId)) return;
-
-        // Critical: User entities returned by IUserManager are detached from the
-        // DbContext that ultimately persists, so SetPreference + UpdateUserAsync
-        // doesn't actually save the new Preferences. We use the DbContext directly.
-        var userIds = _userManager.EnumerateAll().Select(u => u.Id).ToList();
-        await using var ctx = await _dbFactory.CreateDbContextAsync().ConfigureAwait(false);
-        var savedAny = false;
-
-        foreach (var userId in userIds)
+        await _hideLock.WaitAsync().ConfigureAwait(false);
+        try
         {
-            try
+            var existing = GetExisting();
+            if (existing is null) return;
+            if (!Guid.TryParse(existing.ItemId, out var folderId)) return;
+
+            // Critical: User entities returned by IUserManager are detached from the
+            // DbContext that ultimately persists, so SetPreference + UpdateUserAsync
+            // doesn't actually save the new Preferences. We use the DbContext directly.
+            var userIds = _userManager.EnumerateAll().Select(u => u.Id).ToList();
+            await using var ctx = await _dbFactory.CreateDbContextAsync().ConfigureAwait(false);
+            var savedAny = false;
+
+            foreach (var userId in userIds)
             {
-                var user = await ctx.Users
-                    .Include(u => u.Preferences)
-                    .FirstOrDefaultAsync(u => u.Id == userId)
-                    .ConfigureAwait(false);
-                if (user is null) continue;
-
-                var changed = false;
-
-                // Strip from BlockedMediaFolders if present — adding here would
-                // prevent the user from streaming items in our library, which
-                // breaks playback with "Unable to find a valid media source".
-                changed |= RemoveValueFromPreference(user, PreferenceKind.BlockedMediaFolders, folderId);
-                // Users with an EnabledFolders allow-list need this hidden
-                // library included there, otherwise Jellyfin refuses to build
-                // a playable media source for prerolls.
-                changed |= AddValueToExistingPreference(user, PreferenceKind.EnabledFolders, folderId);
-                // Strip from OrderedViews and GroupedFolders so the library tile
-                // doesn't show up in the user's home / sidebar layout.
-                changed |= RemoveValueFromPreference(user, PreferenceKind.OrderedViews, folderId);
-                changed |= RemoveValueFromPreference(user, PreferenceKind.GroupedFolders, folderId);
-                // Add to the "exclude from latest" + "exclude from My Media" sets.
-                changed |= AddValueToPreference(user, PreferenceKind.LatestItemExcludes, folderId);
-                changed |= AddValueToPreference(user, PreferenceKind.MyMediaExcludes, folderId);
-
-                if (changed)
+                try
                 {
-                    savedAny = true;
-                    _logger.LogInformation("[Projectionist] hid library from user {User}", user.Username);
+                    var user = await ctx.Users
+                        .Include(u => u.Preferences)
+                        .FirstOrDefaultAsync(u => u.Id == userId)
+                        .ConfigureAwait(false);
+                    if (user is null) continue;
+
+                    var changed = false;
+
+                    // Strip from BlockedMediaFolders if present — adding here would
+                    // prevent the user from streaming items in our library, which
+                    // breaks playback with "Unable to find a valid media source".
+                    changed |= RemoveValueFromPreference(user, PreferenceKind.BlockedMediaFolders, folderId);
+                    // Users with an EnabledFolders allow-list need this hidden
+                    // library included there, otherwise Jellyfin refuses to build
+                    // a playable media source for prerolls.
+                    changed |= AddValueToExistingPreference(user, PreferenceKind.EnabledFolders, folderId);
+                    // Strip from OrderedViews and GroupedFolders so the library tile
+                    // doesn't show up in the user's home / sidebar layout.
+                    changed |= RemoveValueFromPreference(user, PreferenceKind.OrderedViews, folderId);
+                    changed |= RemoveValueFromPreference(user, PreferenceKind.GroupedFolders, folderId);
+                    // Add to the "exclude from latest" + "exclude from My Media" sets.
+                    changed |= AddValueToPreference(user, PreferenceKind.LatestItemExcludes, folderId);
+                    changed |= AddValueToPreference(user, PreferenceKind.MyMediaExcludes, folderId);
+
+                    if (changed)
+                    {
+                        savedAny = true;
+                        _logger.LogInformation("[Projectionist] hid library from user {User}", user.Username);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "[Projectionist] could not hide library from user id {UserId}", userId);
                 }
             }
-            catch (Exception ex)
+
+            if (savedAny)
             {
-                _logger.LogWarning(ex, "[Projectionist] could not hide library from user id {UserId}", userId);
+                try
+                {
+                    await ctx.SaveChangesAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "[Projectionist] SaveChangesAsync failed when persisting hide preferences");
+                }
             }
         }
-
-        if (savedAny)
+        finally
         {
-            try
-            {
-                await ctx.SaveChangesAsync().ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "[Projectionist] SaveChangesAsync failed when persisting hide preferences");
-            }
+            _hideLock.Release();
         }
     }
 

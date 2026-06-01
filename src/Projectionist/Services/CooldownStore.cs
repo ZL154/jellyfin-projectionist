@@ -12,6 +12,7 @@ namespace Jellyfin.Plugin.Projectionist.Services;
 public sealed class CooldownStore
 {
     private readonly ConcurrentDictionary<(Guid FeatureId, Guid PrerollId), DateTime> _last = new();
+    private long _recordCount;
 
     public bool IsCooling(Guid featureId, Guid prerollId, int hours)
     {
@@ -26,21 +27,21 @@ public sealed class CooldownStore
     public void Record(Guid featureId, Guid prerollId)
     {
         _last[(featureId, prerollId)] = DateTime.UtcNow;
+        var n = System.Threading.Interlocked.Increment(ref _recordCount);
+        if (n % 1024 == 0)
+        {
+            Prune(TimeSpan.FromDays(30));
+        }
     }
 
-    /// <summary>
-    /// Returns true if ANY preroll has been played for this feature recently.
-    /// Used as a fast pre-check before scoring all candidates.
-    /// </summary>
-    public bool FeatureHasRecent(Guid featureId, int hours)
+    public int Prune(TimeSpan olderThan)
     {
-        if (hours <= 0) return false;
-        var cutoff = DateTime.UtcNow - TimeSpan.FromHours(hours);
+        var cutoff = DateTime.UtcNow - olderThan;
+        var removed = 0;
         foreach (var kvp in _last)
         {
-            if (kvp.Key.FeatureId == featureId && kvp.Value > cutoff)
-                return true;
+            if (kvp.Value < cutoff && _last.TryRemove(kvp.Key, out _)) removed++;
         }
-        return false;
+        return removed;
     }
 }
