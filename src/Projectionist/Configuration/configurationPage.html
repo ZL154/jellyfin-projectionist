@@ -446,10 +446,13 @@
 
                 /* === v1.2.0 additions === */
                 .pjt-v12-card {
-                    border-color: var(--pjt-border-hot);
+                    /* Match the surrounding cards exactly so the section
+                       doesn't visually pop with a lighter shade. */
+                    background: var(--pjt-surface);
+                    border-color: var(--pjt-border);
                 }
                 .pjt-subcard {
-                    background: var(--pjt-surface-alt);
+                    background: var(--pjt-bg);
                     border: 1px solid var(--pjt-border);
                     border-radius: 5px;
                     padding: 16px;
@@ -519,8 +522,15 @@
                     background: var(--pjt-surface-alt);
                 }
                 .pjt-loudness-table tr:last-child td { border-bottom: 0; }
-                .pjt-loudness-table .pjt-flagged {
+                .pjt-loudness-table .pjt-flagged td {
                     color: var(--pjt-warn);
+                    background: rgba(245, 166, 35, 0.08);
+                    font-weight: 600;
+                }
+                .pjt-loudness-table .pjt-flagged td:last-child::before {
+                    content: '⚠ ';
+                    color: var(--pjt-warn);
+                    margin-right: 4px;
                 }
             </style>
 
@@ -970,6 +980,7 @@
                         </div>
 
                         <div id="pjt-loudness-result-wrap" style="display:none;">
+                            <div id="pjt-loudness-summary" style="margin-top:12px;font-size:12px;color:var(--pjt-text-dim);"></div>
                             <table class="pjt-loudness-table" id="pjt-loudness-table">
                                 <thead>
                                     <tr>
@@ -1734,20 +1745,31 @@
             });
         }
 
-        function renderLoudnessResult(items) {
+        function renderLoudnessResult(items, baseline, threshold) {
             var wrap = $('pjt-loudness-result-wrap');
             var tbody = $('pjt-loudness-tbody');
+            var summary = $('pjt-loudness-summary');
             if (!items || !items.length) {
                 wrap.style.display = 'none';
                 tbody.innerHTML = '';
+                if (summary) summary.textContent = '';
                 return;
+            }
+            if (summary) {
+                var flaggedCount = items.filter(function (it) { return !!pick(it, 'Flagged', false); }).length;
+                var b = (baseline == null || isNaN(Number(baseline))) ? '—' : Number(baseline).toFixed(1) + ' dB';
+                var t = (threshold == null || isNaN(Number(threshold))) ? '—' : '±' + Number(threshold).toFixed(1) + ' dB';
+                summary.innerHTML = 'Pool baseline (mean): <strong>' + b + '</strong> &nbsp;·&nbsp; '
+                    + 'Threshold: <strong>' + t + '</strong> &nbsp;·&nbsp; '
+                    + 'Flagged: <strong style="color:' + (flaggedCount > 0 ? 'var(--pjt-warn)' : 'var(--pjt-success)') + ';">'
+                    + flaggedCount + ' / ' + items.length + '</strong>';
             }
             var html = '';
             for (var i = 0; i < items.length; i++) {
                 var it = items[i];
                 var fn = pick(it, 'FileName', pick(it, 'Name', ''));
                 var meanRaw = pick(it, 'MeanDb', pick(it, 'Mean', null));
-                var devRaw = pick(it, 'Deviation', null);
+                var devRaw = pick(it, 'DeviationFromBaselineDb', pick(it, 'Deviation', null));
                 var flagged = !!pick(it, 'Flagged', false);
                 var meanStr = (meanRaw == null || isNaN(Number(meanRaw))) ? '—' : Number(meanRaw).toFixed(1) + ' dB';
                 var devStr;
@@ -1778,8 +1800,10 @@
                 else if (res && Array.isArray(res.Items)) items = res.Items;
                 else if (res && Array.isArray(res.Results)) items = res.Results;
                 else items = [];
-                renderLoudnessResult(items);
-                if (!items.length) statusEl.textContent = 'No results returned.';
+                var baseline = res && (res.BaselineMeanDb !== undefined ? res.BaselineMeanDb : res.baselineMeanDb);
+                var threshold = res && (res.ThresholdDb !== undefined ? res.ThresholdDb : res.thresholdDb);
+                renderLoudnessResult(items, baseline, threshold);
+                if (!items.length) statusEl.textContent = 'No results returned. (ffmpeg may be missing — check Jellyfin logs for "[Projectionist]")';
             }).catch(function(err) {
                 console.error('[Projectionist] loudness analyze failed', err);
                 statusEl.textContent = 'Analysis failed.';

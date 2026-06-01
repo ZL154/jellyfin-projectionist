@@ -100,6 +100,18 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
     var prerollIds = new Set();
     var prerollNames = new Set();
     var currentPrerollFileName = null;
+    // Window-visible debug log so the Playwright/inspector can read state
+    // without relying on console capture. Each entry: {t: ts, event: str, data: {}}.
+    window.__pjtDebug = window.__pjtDebug || { entries: [], state: {} };
+    function dlog(event, data) {
+        try {
+            window.__pjtDebug.entries.push({ t: Date.now(), event: event, data: data });
+            if (window.__pjtDebug.entries.length > 200) window.__pjtDebug.entries.shift();
+        } catch (_) {}
+    }
+    window.__pjtDebug.state.skipIIFE = {
+        prerollIds: prerollIds, prerollPaths: prerollPaths, prerollNames: prerollNames,
+    };
     window.__projectionistSettings = window.__projectionistSettings || { featurePreloadEnabled: false, featurePreloadMode: 0 };
 
     function tryRequire(name) {
@@ -133,10 +145,15 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
         document.head.appendChild(s);
     }
 
-    function loadConfig() {
+    function loadConfig(attempts) {
+        attempts = attempts || 0;
         try {
             var ac = (window.ApiClient || (window.connectionManager && connectionManager.currentApiClient && connectionManager.currentApiClient()));
-            if (!ac) return;
+            if (!ac) {
+                // Retry while ApiClient initialises. Up to ~30 seconds.
+                if (attempts < 150) setTimeout(function () { loadConfig(attempts + 1); }, 200);
+                return;
+            }
             ac.fetch({ url: ac.getUrl('Plugins/Projectionist/HookSettings'), type: 'GET', dataType: 'json' })
                 .then(function (cfg) {
                     if (!cfg) return;
@@ -147,9 +164,10 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
                         (cfg.EnableFeaturePreload !== undefined ? cfg.EnableFeaturePreload : cfg.enableFeaturePreload) === true ? 1 : 0);
                     window.__projectionistSettings.featurePreloadMode = preloadMode;
                     window.__projectionistSettings.featurePreloadEnabled = preloadMode !== 0;
+                    dlog('config:loaded', { minSkipSeconds: minSkipSeconds, enabled: enabled, preloadMode: preloadMode });
                 })
-                .catch(function () {});
-        } catch (_) {}
+                .catch(function (err) { dlog('config:fetch-failed', { msg: String(err) }); });
+        } catch (e) { dlog('config:throw', { msg: String(e) }); }
     }
     loadConfig();
 
@@ -164,23 +182,33 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
     }
 
     function isPrerollItem(item) {
-        if (!item) return false;
-        // Heuristic: item belongs to "Projectionist Prerolls" library, OR its path
-        // is in the set we recorded when prepending intros.
-        if (item.Id && prerollIds.has(item.Id)) return true;
-        if (prerollPaths.has(item.Path)) return true;
-        if (item.Name && prerollNames.has(item.Name)) return true;
-        // Fallback: check parent name
-        if (item.SeriesName === 'Projectionist Prerolls' ||
+        if (!item) {
+            try { console.log('[Projectionist] isPrerollItem: NULL item'); } catch (_) {}
+            return false;
+        }
+        var byId = !!(item.Id && prerollIds.has(item.Id));
+        var byPath = !!prerollPaths.has(item.Path);
+        var byName = !!(item.Name && prerollNames.has(item.Name));
+        var byParent = item.SeriesName === 'Projectionist Prerolls' ||
             item.ParentName === 'Projectionist Prerolls' ||
-            item.CollectionName === 'Projectionist Prerolls') return true;
-        return false;
+            item.CollectionName === 'Projectionist Prerolls';
+        var verdict = byId || byPath || byName || byParent;
+        dlog('isPrerollItem', {
+            verdict: verdict,
+            id: item.Id, name: item.Name, path: item.Path,
+            seriesName: item.SeriesName, parentName: item.ParentName, collectionName: item.CollectionName,
+            type: item.Type, mediaType: item.MediaType,
+            matched: { byId: byId, byPath: byPath, byName: byName, byParent: byParent },
+            sets: { ids: prerollIds.size, paths: prerollPaths.size, names: prerollNames.size },
+        });
+        return verdict;
     }
 
     window.__projectionistMarkPreroll = function (path, id, name) {
         if (path) prerollPaths.add(path);
         if (id) prerollIds.add(id);
         if (name) prerollNames.add(name);
+        dlog('mark-preroll', { path: path, id: id, name: name, ids: prerollIds.size, paths: prerollPaths.size, names: prerollNames.size });
     };
 
     function getApiClientLocal() {
@@ -192,17 +220,43 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
     }
 
     function getOverlayHost() {
-        return document.fullscreenElement
-            || document.webkitFullscreenElement
-            || document.querySelector('.videoPlayerContainer')
-            || document.querySelector('.htmlVideoPlayerContainer')
-            || document.body;
+        // Pick the most-foreground host: fullscreen first, then Jellyfin's
+        // own player container variants (different versions name it
+        // differently), then the topmost video's ancestor stacking context,
+        // finally document.body.
+        var fs = document.fullscreenElement || document.webkitFullscreenElement;
+        if (fs) return fs;
+        var candidates = [
+            '.videoPlayerContainer',
+            '.htmlVideoPlayerContainer',
+            '.videoOsdBottom',
+            '.videoPlayer',
+            '#videoOsdPage',
+            '.osdPage',
+            '.dialogContainer',
+            '.skinBody',
+        ];
+        for (var i = 0; i < candidates.length; i++) {
+            var el = document.querySelector(candidates[i]);
+            if (el) return el;
+        }
+        // Last-resort: parent of the current <video> tag.
+        var video = document.querySelector('video');
+        if (video) {
+            var p = video.parentElement;
+            // walk up a few levels so the button sits beside the OSD, not the bare <video>
+            for (var k = 0; k < 3 && p && p.parentElement; k++) p = p.parentElement;
+            if (p) return p;
+        }
+        return document.body;
     }
 
     function showButton() {
         ensureStyle();
         var host = getOverlayHost();
         var btn = document.getElementById(BTN_ID);
+        var hostInfo = host.tagName + (host.className ? '.' + host.className : '');
+        dlog('show-button', { host: hostInfo, btnAlreadyExists: !!btn });
         if (!btn) {
             btn = document.createElement('button');
             btn.id = BTN_ID;
@@ -239,13 +293,20 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
         if (btn) btn.classList.add('pjt-hidden');
     }
 
+    var _attachSkipAttempts = 0;
     function attachSkipWatcher() {
         var events = getEvents();
         var pm = getPlaybackManager();
         if (!events || !pm) {
-            setTimeout(attachSkipWatcher, 400);
+            _attachSkipAttempts++;
+            // Modern Jellyfin Web has removed window.playbackManager + window.require,
+            // so this watcher can never bind. Give up after ~30 seconds of trying;
+            // the video-element-based v2 watcher at the end of the file does the job.
+            if (_attachSkipAttempts < 75) setTimeout(attachSkipWatcher, 400);
+            else dlog('skip-watcher:giving-up', { attempts: _attachSkipAttempts });
             return;
         }
+        dlog('attach-skip-watcher', { enabled: enabled, minSkipSeconds: minSkipSeconds });
         // Install a one-time fullscreenchange hook so the skip button gets
         // reparented into document.fullscreenElement whenever the player
         // toggles fullscreen. Without this, a body-parented button is not
@@ -266,6 +327,11 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
             if (revealTimer) { clearTimeout(revealTimer); revealTimer = null; }
             try {
                 var item = pm.currentItem(player);
+                dlog('playbackstart', {
+                    hasItem: !!item, id: item && item.Id, name: item && item.Name,
+                    type: item && item.Type, path: item && item.Path,
+                    enabled: enabled, hostNow: (getOverlayHost() && (getOverlayHost().tagName + '.' + (getOverlayHost().className || ''))),
+                });
                 if (!isPrerollItem(item) || !enabled) {
                     currentPrerollFileName = null;
                     hideButton();
@@ -692,33 +758,22 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
     waitForPlaybackManager(patch);
 })();
 
-// ============== Cinema countdown overlay (MVP) ==============
-// When playbackstart fires AND the current item is a preroll AND
-// config.EnableCountdownOverlay is true, render a 5-4-3-2-1 numeral overlay
-// with the upcoming feature title. Auto-removes after
-// config.CountdownDurationSeconds seconds.
+// ============== Cinema countdown overlay (v2) ==============
+// Replaces the original IIFE which relied on a parent-name heuristic that
+// modern Jellyfin doesn't populate (only ParentId is set). This version
+// mirrors the v2 skip-button approach: MutationObserver on <video>, parse
+// itemId from src, match against /Prerolls path set. Triggers at
+// (duration - configuredSeconds) so it renders during the FINAL seconds
+// of the preroll — academy-leader style, matching the admin-page text
+// "Plays right before the feature starts".
 (function () {
     'use strict';
     var OVERLAY_ID = 'pjt-countdown';
-    var countdownEnabled = false;
-    var countdownDuration = 5;
-    var configLoaded = false;
-
-    function tryRequire(name) {
-        try {
-            if (window.require) return window.require(name);
-            if (window.RequireJS) return window.RequireJS(name);
-        } catch (_) {}
-        return null;
-    }
-
-    function getPlaybackManager() {
-        return window.playbackManager || tryRequire('playbackManager');
-    }
-
-    function getEvents() {
-        return window.Events || tryRequire('events') || tryRequire('Events');
-    }
+    var enabled = false;
+    var duration = 3;
+    var showTitle = false;
+    var attached = new WeakSet();
+    var pathSet = null;
 
     function getApiClient() {
         if (window.ApiClient) return window.ApiClient;
@@ -728,83 +783,162 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
         return null;
     }
 
-    function loadConfig() {
+    function dlog(event, data) {
         try {
-            var ac = getApiClient();
-            if (!ac) return;
-            ac.fetch({ url: ac.getUrl('Plugins/Projectionist/Config'), type: 'GET', dataType: 'json' })
-                .then(function (cfg) {
-                    if (!cfg) return;
-                    configLoaded = true;
-                    countdownEnabled = (cfg.EnableCountdownOverlay !== undefined
-                        ? cfg.EnableCountdownOverlay
-                        : cfg.enableCountdownOverlay) === true;
-                    var dur = (cfg.CountdownDurationSeconds !== undefined
-                        ? cfg.CountdownDurationSeconds
-                        : cfg.countdownDurationSeconds);
-                    if (typeof dur === 'number' && dur > 0) countdownDuration = dur;
-                })
-                .catch(function () {});
+            window.__pjtDebug = window.__pjtDebug || { entries: [], state: {} };
+            window.__pjtDebug.entries.push({ t: Date.now(), event: 'countdown:' + event, data: data });
+            if (window.__pjtDebug.entries.length > 200) window.__pjtDebug.entries.shift();
         } catch (_) {}
+    }
+
+    function loadConfig(attempts) {
+        attempts = attempts || 0;
+        var ac = getApiClient();
+        if (!ac) {
+            if (attempts < 150) setTimeout(function () { loadConfig(attempts + 1); }, 200);
+            return;
+        }
+        ac.fetch({ url: ac.getUrl('Plugins/Projectionist/Config'), type: 'GET', dataType: 'json' })
+            .then(function (cfg) {
+                if (!cfg) return;
+                enabled = cfg.EnableCountdownOverlay === true;
+                var dur = cfg.CountdownDurationSeconds;
+                if (typeof dur === 'number' && dur >= 2) duration = Math.min(Math.max(dur, 2), 10);
+                showTitle = cfg.CountdownShowFeatureTitle === true;
+                dlog('config', { enabled: enabled, duration: duration, showTitle: showTitle });
+                ac.fetch({ url: ac.getUrl('Plugins/Projectionist/Prerolls'), type: 'GET', dataType: 'json' })
+                    .then(function (data) {
+                        var s = new Set();
+                        (data && data.Files ? data.Files : []).forEach(function (f) {
+                            if (f && f.Path) s.add(String(f.Path).toLowerCase());
+                        });
+                        pathSet = s;
+                        dlog('paths', { count: s.size });
+                    })
+                    .catch(function () { pathSet = new Set(); });
+            })
+            .catch(function () {});
     }
     loadConfig();
 
-    function isPrerollItem(item) {
-        if (!item) return false;
-        if (item.SeriesName === 'Projectionist Prerolls' ||
-            item.ParentName === 'Projectionist Prerolls' ||
-            item.CollectionName === 'Projectionist Prerolls') return true;
-        // Defer to the skip-button IIFE's tracker if exposed via globals.
-        try {
-            // The skip-button IIFE marks prerolls via window.__projectionistMarkPreroll;
-            // there's no readable mirror, so fall back to library-name heuristic only.
-        } catch (_) {}
-        return false;
+    function parseItemIdFromSrc(src) {
+        var m = /\/Videos\/([0-9a-f]{32})\//i.exec(src || '');
+        return m ? m[1] : null;
     }
 
-    function renderCountdown() {
-        try {
-            var existing = document.getElementById(OVERLAY_ID);
-            if (existing) existing.remove();
-            var overlay = document.createElement('div');
-            overlay.id = OVERLAY_ID;
-            overlay.style.cssText =
-                'position:fixed;top:0;left:0;width:100vw;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);z-index:99999;color:#fff;font-family:sans-serif;pointer-events:none;';
-            var num = document.createElement('div');
-            num.style.cssText = 'font-size:30vw;font-weight:900;line-height:1;text-shadow:0 0 30px rgba(229,9,20,0.8);';
-            var title = document.createElement('div');
-            title.style.cssText = 'font-size:5vw;margin-top:24px;opacity:0.85;font-weight:300;';
-            title.textContent = window.__projectionistUpcomingFeatureTitle || '';
-            overlay.appendChild(num);
-            if (window.__projectionistUpcomingFeatureTitle) overlay.appendChild(title);
-            document.body.appendChild(overlay);
-            var n = countdownDuration;
-            num.textContent = n;
-            var t = setInterval(function () {
-                n--;
-                if (n < 1) { clearInterval(t); overlay.remove(); return; }
-                num.textContent = n;
-            }, 1000);
-        } catch (_) {}
+    function removeOverlay() {
+        var el = document.getElementById(OVERLAY_ID);
+        if (el) el.remove();
     }
 
-    function attachCountdownWatcher() {
-        var events = getEvents();
-        var pm = getPlaybackManager();
-        if (!events || !pm) {
-            setTimeout(attachCountdownWatcher, 400);
-            return;
+    function renderOverlay(secondsLeft, featureTitle) {
+        removeOverlay();
+        if (!document.getElementById('pjt-countdown-style')) {
+            var st = document.createElement('style');
+            st.id = 'pjt-countdown-style';
+            st.textContent =
+                '@keyframes pjtFadeIn{from{opacity:0}to{opacity:1}}'
+                + '@keyframes pjtPulse{0%{transform:scale(1);opacity:1}50%{transform:scale(1.08);opacity:.9}100%{transform:scale(1);opacity:1}}'
+                + '#' + OVERLAY_ID + ' .pjt-cd-num{animation:pjtPulse 1s ease-in-out;}';
+            document.head.appendChild(st);
         }
-        events.on(pm, 'playbackstart', function (e, player) {
-            try {
-                if (!countdownEnabled) return;
-                var item = pm.currentItem(player);
-                if (!isPrerollItem(item)) return;
-                renderCountdown();
-            } catch (_) {}
-        });
+        var overlay = document.createElement('div');
+        overlay.id = OVERLAY_ID;
+        overlay.style.cssText =
+            'position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;'
+            + 'background:radial-gradient(ellipse at center,rgba(0,0,0,0.35) 0%,rgba(0,0,0,0.75) 80%);'
+            + 'z-index:2147482999;color:#fff;font-family:-apple-system,sans-serif;pointer-events:none;'
+            + 'animation:pjtFadeIn .3s ease-out;';
+        var ring = document.createElement('div');
+        ring.style.cssText =
+            'width:min(28vw,28vh);height:min(28vw,28vh);border:6px solid rgba(229,9,20,0.55);'
+            + 'border-radius:50%;display:flex;align-items:center;justify-content:center;'
+            + 'box-shadow:0 0 60px rgba(229,9,20,0.35),inset 0 0 30px rgba(229,9,20,0.1);';
+        var num = document.createElement('div');
+        num.className = 'pjt-cd-num';
+        num.style.cssText = 'font-size:min(18vw,18vh);font-weight:900;line-height:1;text-shadow:0 0 30px rgba(229,9,20,0.8);';
+        num.textContent = String(secondsLeft);
+        ring.appendChild(num);
+        overlay.appendChild(ring);
+        if (showTitle && featureTitle) {
+            var title = document.createElement('div');
+            title.style.cssText = 'font-size:min(4vw,4vh);margin-top:32px;opacity:0.85;font-weight:300;letter-spacing:0.04em;text-transform:uppercase;';
+            title.textContent = featureTitle;
+            overlay.appendChild(title);
+        }
+        // Parent to fullscreen element when fullscreen, body otherwise (same
+        // reasoning as the v2 skip button: .videoPlayerContainer has a CSS
+        // transform that clips fixed-positioned descendants).
+        var fs = document.fullscreenElement || document.webkitFullscreenElement;
+        (fs || document.body).appendChild(overlay);
     }
-    attachCountdownWatcher();
+
+    function attachCountdownToVideo(video) {
+        if (attached.has(video)) return;
+        attached.add(video);
+        var lastRenderedSecond = null;
+        var isPreroll = false;
+
+        function classify() {
+            if (!enabled) return;
+            if (!pathSet) return;
+            var src = video.currentSrc || video.src;
+            var id = parseItemIdFromSrc(src);
+            if (!id) { isPreroll = false; return; }
+            var ac = getApiClient();
+            if (!ac) return;
+            ac.fetch({ url: ac.getUrl('Items/' + id), type: 'GET', dataType: 'json' })
+                .then(function (item) {
+                    isPreroll = !!(item && item.Path && pathSet.has(String(item.Path).toLowerCase()));
+                    dlog('classify', { id: id, isPreroll: isPreroll, name: item && item.Name });
+                })
+                .catch(function () { isPreroll = false; });
+        }
+
+        function maybeRender() {
+            if (!enabled || !isPreroll) return;
+            if (!isFinite(video.duration) || video.duration <= 0) return;
+            var remaining = video.duration - video.currentTime;
+            if (remaining > duration || remaining < 0) {
+                if (lastRenderedSecond !== null) {
+                    removeOverlay();
+                    lastRenderedSecond = null;
+                }
+                return;
+            }
+            var sec = Math.max(1, Math.ceil(remaining));
+            if (sec !== lastRenderedSecond) {
+                lastRenderedSecond = sec;
+                renderOverlay(sec, '');
+                dlog('render', { sec: sec });
+            }
+        }
+
+        video.addEventListener('loadedmetadata', function () {
+            removeOverlay();
+            lastRenderedSecond = null;
+            isPreroll = false;
+            classify();
+        });
+        video.addEventListener('playing', function () {
+            if (!isPreroll) classify();
+        });
+        video.addEventListener('timeupdate', maybeRender);
+        video.addEventListener('ended', function () { removeOverlay(); lastRenderedSecond = null; });
+        video.addEventListener('emptied', function () { removeOverlay(); lastRenderedSecond = null; });
+        if (video.readyState >= 1) classify();
+    }
+
+    function sweep() {
+        var videos = document.querySelectorAll('video');
+        for (var i = 0; i < videos.length; i++) attachCountdownToVideo(videos[i]);
+    }
+    sweep();
+    try {
+        var obs = new MutationObserver(function () { sweep(); });
+        obs.observe(document.body, { childList: true, subtree: true });
+    } catch (_) {}
+    dlog('installed', {});
 })();
 
 // ============== Post-roll hook (MVP) ==============
@@ -880,4 +1014,268 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
         });
     }
     attachPostRoll();
+})();
+
+// ============== Skip button (video-element fallback) ==============
+// Modern Jellyfin Web removed window.require + window.playbackManager from
+// the global scope, so the original playbackManager-based skip button never
+// fires. This IIFE hooks the <video> element directly via MutationObserver:
+//   1. When a <video> appears, listen for 'loadedmetadata' / 'playing'.
+//   2. Parse the itemId from the stream URL (/Videos/{id}/stream.*).
+//   3. Ask the server whether that item belongs to the hidden Projectionist
+//      Prerolls library. Cache the result.
+//   4. If yes, show the skip button (parented to the video's container).
+//   5. Click = video.currentTime = video.duration, which triggers Jellyfin
+//      to advance to the next item in the play queue.
+(function () {
+    'use strict';
+    var BTN_ID = 'pjt-skip-btn';
+    var STYLE_ID = 'pjt-skip-style-v2';
+    var ITEM_CACHE = {}; // itemId -> isPreroll
+    var PREROLL_PATHS = null; // Set<string> populated from /Plugins/Projectionist/Prerolls
+    var enabled = true;
+    var minSkipSeconds = 0;
+    var configLoadedV2 = false;
+
+    function dlog(event, data) {
+        try {
+            window.__pjtDebug = window.__pjtDebug || { entries: [], state: {} };
+            window.__pjtDebug.entries.push({ t: Date.now(), event: 'v2:' + event, data: data });
+            if (window.__pjtDebug.entries.length > 200) window.__pjtDebug.entries.shift();
+        } catch (_) {}
+    }
+
+    function getApiClient() {
+        if (window.ApiClient) return window.ApiClient;
+        if (window.connectionManager && typeof connectionManager.currentApiClient === 'function') {
+            return connectionManager.currentApiClient();
+        }
+        return null;
+    }
+
+    function loadConfigV2(attempts) {
+        attempts = attempts || 0;
+        var ac = getApiClient();
+        if (!ac) {
+            if (attempts < 150) setTimeout(function () { loadConfigV2(attempts + 1); }, 200);
+            return;
+        }
+        ac.fetch({ url: ac.getUrl('Plugins/Projectionist/HookSettings'), type: 'GET', dataType: 'json' })
+            .then(function (cfg) {
+                if (!cfg) return;
+                enabled = (cfg.EnableSkippablePrerolls !== undefined ? cfg.EnableSkippablePrerolls : true) !== false;
+                minSkipSeconds = cfg.SkippableAfterSeconds || 0;
+                configLoadedV2 = true;
+                dlog('config-loaded', { enabled: enabled, minSkipSeconds: minSkipSeconds });
+                // Pre-warm the preroll-path cache so the very first playback
+                // doesn't have to wait on /Prerolls inside isPrerollItemId.
+                loadPrerollPaths();
+            })
+            .catch(function (e) { dlog('config-failed', { msg: String(e) }); });
+    }
+    loadConfigV2();
+
+    function ensureStyleV2() {
+        if (document.getElementById(STYLE_ID)) return;
+        var s = document.createElement('style');
+        s.id = STYLE_ID;
+        s.textContent =
+            '#' + BTN_ID + '{position:fixed;right:32px;bottom:120px;z-index:2147483000;'
+            + 'background:rgba(20,20,28,.85);color:#fff;border:1px solid rgba(229,9,20,.6);'
+            + 'border-radius:6px;padding:10px 18px;font:600 13px/1 -apple-system,sans-serif;'
+            + 'cursor:pointer;backdrop-filter:blur(8px);transition:opacity .2s,transform .2s;'
+            + 'letter-spacing:.04em;text-transform:uppercase;}'
+            + '#' + BTN_ID + ':hover{background:rgba(229,9,20,.9);}'
+            + '#' + BTN_ID + '.pjt-hidden{opacity:0;pointer-events:none;transform:translateY(8px);}';
+        document.head.appendChild(s);
+    }
+
+    function getOverlayHost() {
+        // Fullscreen: button MUST live inside document.fullscreenElement,
+        // otherwise the browser doesn't paint anything outside that subtree.
+        var fs = document.fullscreenElement || document.webkitFullscreenElement;
+        if (fs) return fs;
+        // Non-fullscreen: DO NOT parent into .videoPlayerContainer. That
+        // container has a CSS transform (translateZ for GPU acceleration)
+        // which makes its fixed-positioned children relative to ITSELF, not
+        // the viewport. Result: `position:fixed; bottom:120px` renders 120px
+        // from the container's bottom — usually offscreen, since the
+        // container is full-viewport tall. Anchoring at document.body keeps
+        // the button viewport-relative. The button's z-index (2147483000) is
+        // already maxed out so it floats above Jellyfin's player chrome.
+        return document.body;
+    }
+
+    function parseItemIdFromSrc(src) {
+        if (!src) return null;
+        // Jellyfin stream URLs: /Videos/{itemId}/stream.* or /Videos/{itemId}/master.m3u8
+        var m = /\/Videos\/([0-9a-f]{32})\//i.exec(src);
+        return m ? m[1] : null;
+    }
+
+    function loadPrerollPaths() {
+        var ac = getApiClient();
+        if (!ac) return Promise.resolve(null);
+        return ac.fetch({ url: ac.getUrl('Plugins/Projectionist/Prerolls'), type: 'GET', dataType: 'json' })
+            .then(function (data) {
+                var set = new Set();
+                (data && data.Files ? data.Files : []).forEach(function (f) {
+                    if (f && f.Path) set.add(String(f.Path).toLowerCase());
+                });
+                PREROLL_PATHS = set;
+                dlog('preroll-paths-loaded', { count: set.size });
+                return set;
+            })
+            .catch(function (e) {
+                dlog('preroll-paths-fail', { msg: String(e) });
+                return null;
+            });
+    }
+
+    function ensurePrerollPaths() {
+        if (PREROLL_PATHS !== null) return Promise.resolve(PREROLL_PATHS);
+        return loadPrerollPaths();
+    }
+
+    function isPrerollItemId(itemId) {
+        if (!itemId) return Promise.resolve(false);
+        if (ITEM_CACHE[itemId] !== undefined) return Promise.resolve(ITEM_CACHE[itemId]);
+        var ac = getApiClient();
+        if (!ac) return Promise.resolve(false);
+        return Promise.all([
+            ac.fetch({ url: ac.getUrl('Items/' + itemId), type: 'GET', dataType: 'json' }).catch(function () { return null; }),
+            ensurePrerollPaths(),
+        ]).then(function (results) {
+            var item = results[0];
+            var paths = results[1];
+            if (!item) return false;
+            var byPath = paths && item.Path && paths.has(String(item.Path).toLowerCase());
+            var byName = !!item && (
+                item.SeriesName === 'Projectionist Prerolls' ||
+                item.ParentName === 'Projectionist Prerolls' ||
+                item.CollectionName === 'Projectionist Prerolls' ||
+                item.GrandparentName === 'Projectionist Prerolls'
+            );
+            var verdict = byPath || byName;
+            ITEM_CACHE[itemId] = verdict;
+            dlog('item-resolved', {
+                id: itemId, name: item && item.Name, path: item && item.Path,
+                byPath: !!byPath, byName: !!byName, verdict: verdict,
+                pathCount: paths ? paths.size : 0,
+            });
+            return verdict;
+        });
+    }
+
+    var currentPrerollFileName = null;
+    var attachedVideos = new WeakSet();
+
+    function showSkip(video) {
+        ensureStyleV2();
+        var host = getOverlayHost();
+        var btn = document.getElementById(BTN_ID);
+        if (!btn) {
+            btn = document.createElement('button');
+            btn.id = BTN_ID;
+            btn.textContent = 'Skip';
+            btn.addEventListener('click', function () {
+                try {
+                    // skip-rate reporting
+                    try {
+                        var ac = getApiClient();
+                        if (ac && currentPrerollFileName) {
+                            var seconds = video ? Math.round(video.currentTime * 10) / 10 : 0;
+                            fetch('/Plugins/Projectionist/SkipReport', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json', 'X-Emby-Token': ac.accessToken() },
+                                body: JSON.stringify({ fileName: currentPrerollFileName, secondsBeforeSkip: seconds }),
+                            }).catch(function () {});
+                        }
+                    } catch (_) {}
+                    // Skip = jump to the end. Jellyfin advances the queue on 'ended'.
+                    if (video && isFinite(video.duration) && video.duration > 0) {
+                        video.currentTime = Math.max(0, video.duration - 0.25);
+                    }
+                } catch (_) {}
+            });
+        }
+        if (btn.parentNode !== host) host.appendChild(btn);
+        btn.classList.remove('pjt-hidden');
+        dlog('show', { host: host.tagName + '.' + (host.className || ''), btnReused: !!btn.parentNode });
+    }
+
+    function hideSkip() {
+        var btn = document.getElementById(BTN_ID);
+        if (btn) btn.classList.add('pjt-hidden');
+        currentPrerollFileName = null;
+    }
+
+    function onVideoMetadata(video) {
+        if (!enabled) return;
+        var src = video.currentSrc || video.src;
+        var id = parseItemIdFromSrc(src);
+        dlog('video-metadata', { id: id, src: (src || '').substring(0, 120) });
+        if (!id) { hideSkip(); return; }
+        isPrerollItemId(id).then(function (isPre) {
+            if (!isPre) { hideSkip(); return; }
+            // Track filename for skip-rate reporting.
+            var ac = getApiClient();
+            if (ac) {
+                ac.fetch({ url: ac.getUrl('Items/' + id), type: 'GET', dataType: 'json' })
+                    .then(function (item) {
+                        if (item && item.Path) {
+                            var p = String(item.Path);
+                            var slash = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+                            currentPrerollFileName = slash >= 0 ? p.substring(slash + 1) : p;
+                        } else if (item && item.Name) {
+                            currentPrerollFileName = item.Name;
+                        }
+                    })
+                    .catch(function () {});
+            }
+            if (minSkipSeconds > 0) {
+                setTimeout(function () { showSkip(video); }, minSkipSeconds * 1000);
+            } else {
+                showSkip(video);
+            }
+        });
+    }
+
+    function attachToVideo(video) {
+        if (attachedVideos.has(video)) return;
+        attachedVideos.add(video);
+        dlog('attach-video', { src: (video.currentSrc || video.src || '').substring(0, 80) });
+        video.addEventListener('loadedmetadata', function () { onVideoMetadata(video); });
+        video.addEventListener('playing', function () { onVideoMetadata(video); });
+        video.addEventListener('emptied', hideSkip);
+        video.addEventListener('ended', hideSkip);
+        video.addEventListener('pause', function () {
+            // keep button visible during user-pause - they may want to skip during pause
+        });
+        // If metadata already loaded, kick now.
+        if (video.readyState >= 1) onVideoMetadata(video);
+    }
+
+    // Initial sweep + MutationObserver for late-arriving <video> elements.
+    function sweepVideos() {
+        var videos = document.querySelectorAll('video');
+        for (var i = 0; i < videos.length; i++) attachToVideo(videos[i]);
+    }
+    sweepVideos();
+    try {
+        var obs = new MutationObserver(function () { sweepVideos(); });
+        obs.observe(document.body, { childList: true, subtree: true });
+    } catch (_) {}
+
+    // Reparent on fullscreen transitions.
+    function reparent() {
+        var btn = document.getElementById(BTN_ID);
+        if (!btn) return;
+        var host = getOverlayHost();
+        if (btn.parentNode !== host) host.appendChild(btn);
+    }
+    document.addEventListener('fullscreenchange', reparent);
+    document.addEventListener('webkitfullscreenchange', reparent);
+
+    dlog('v2-installed', {});
 })();

@@ -54,11 +54,17 @@ public sealed class LoudnessAnalyzer
         if (cached is not null) return cached;
         if (!File.Exists(path)) return null;
 
+        var ffmpegPath = ResolveFfmpegPath();
+        if (ffmpegPath is null)
+        {
+            _logger.LogWarning("[Projectionist] ffmpeg binary not found; loudness analysis disabled. Tried jellyfin-ffmpeg, /usr/bin/ffmpeg, PATH.");
+            return null;
+        }
         try
         {
             var psi = new ProcessStartInfo
             {
-                FileName = "ffmpeg",
+                FileName = ffmpegPath,
                 ArgumentList =
                 {
                     "-hide_banner", "-nostats",
@@ -73,11 +79,20 @@ public sealed class LoudnessAnalyzer
                 CreateNoWindow = true,
             };
             using var proc = Process.Start(psi);
-            if (proc is null) return null;
+            if (proc is null)
+            {
+                _logger.LogWarning("[Projectionist] Process.Start({Bin}) returned null for {File}", ffmpegPath, path);
+                return null;
+            }
             var stderr = await proc.StandardError.ReadToEndAsync().ConfigureAwait(false);
             await proc.WaitForExitAsync().ConfigureAwait(false);
             var (mean, max) = ParseVolumeDetect(stderr);
-            if (double.IsNaN(mean) && double.IsNaN(max)) return null;
+            if (double.IsNaN(mean) && double.IsNaN(max))
+            {
+                _logger.LogWarning("[Projectionist] ffmpeg ({Bin}) produced no volumedetect output for {File}. ExitCode={Code}. stderr head: {Err}",
+                    ffmpegPath, path, proc.ExitCode, stderr.Length > 200 ? stderr.Substring(0, 200) : stderr);
+                return null;
+            }
             var info = new FileInfo(path);
             var result = new LoudnessResult
             {
@@ -102,6 +117,59 @@ public sealed class LoudnessAnalyzer
     {
         EnsureLoaded();
         return _cache.Values.ToList();
+    }
+
+    private static readonly string[] FfmpegSearchPaths =
+    {
+        "/usr/lib/jellyfin-ffmpeg/ffmpeg",
+        "/usr/lib/jellyfin/ffmpeg",
+        "/opt/jellyfin-ffmpeg/ffmpeg",
+        "/usr/bin/ffmpeg",
+        "/usr/local/bin/ffmpeg",
+    };
+
+    private string? _resolvedFfmpeg;
+
+    private string? ResolveFfmpegPath()
+    {
+        if (_resolvedFfmpeg is not null) return _resolvedFfmpeg;
+        foreach (var candidate in FfmpegSearchPaths)
+        {
+            if (File.Exists(candidate))
+            {
+                _logger.LogDebug("[Projectionist] using ffmpeg at {Path}", candidate);
+                _resolvedFfmpeg = candidate;
+                return candidate;
+            }
+        }
+        // Try PATH-resolved 'ffmpeg' as a final fallback. Process.Start can
+        // find it via PATH on Linux but we test by spawning a quick -version.
+        try
+        {
+            using var test = Process.Start(new ProcessStartInfo
+            {
+                FileName = "ffmpeg",
+                ArgumentList = { "-version" },
+                RedirectStandardError = true,
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            });
+            if (test is not null)
+            {
+                test.WaitForExit(3000);
+                if (test.ExitCode == 0)
+                {
+                    _resolvedFfmpeg = "ffmpeg";
+                    return _resolvedFfmpeg;
+                }
+            }
+        }
+        catch
+        {
+            // PATH lookup failed
+        }
+        return null;
     }
 
     private static (double mean, double max) ParseVolumeDetect(string stderr)
