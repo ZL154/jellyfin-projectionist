@@ -884,34 +884,6 @@
                         <div class="pjt-hint">Paste a Jellyfin item Guid (32 hex chars, with or without dashes).</div>
                     </div>
 
-                    <!-- 2. Cinema countdown overlay -->
-                    <div class="pjt-subcard">
-                        <h3>Cinema countdown overlay</h3>
-                        <div class="pjt-section-hint">Show a brief countdown overlay between the last preroll and the feature, like the leader on a film reel.</div>
-
-                        <div class="pjt-checkbox-row">
-                            <input type="checkbox" id="pjt-countdown-enabled" />
-                            <label for="pjt-countdown-enabled">
-                                <span class="pjt-cb-title">Enable countdown overlay</span>
-                                <span class="pjt-cb-hint">Plays right before the feature starts.</span>
-                            </label>
-                        </div>
-
-                        <div class="pjt-row">
-                            <label class="pjt-label" for="pjt-countdown-duration">Countdown duration (seconds)</label>
-                            <input class="pjt-input" id="pjt-countdown-duration" type="number" min="3" max="10" />
-                            <div class="pjt-hint">3–10 seconds.</div>
-                        </div>
-
-                        <div class="pjt-checkbox-row">
-                            <input type="checkbox" id="pjt-countdown-title" />
-                            <label for="pjt-countdown-title">
-                                <span class="pjt-cb-title">Show feature title under countdown</span>
-                                <span class="pjt-cb-hint">"Now showing: …" beneath the number.</span>
-                            </label>
-                        </div>
-                    </div>
-
                     <!-- 3. Coming-soon trailers -->
                     <div class="pjt-subcard">
                         <h3>Coming-soon trailers</h3>
@@ -1385,13 +1357,6 @@
                 $('pjt-preload-mode').value = String(preloadMode);
 
                 // ----- v1.2.0 fields -----
-                $('pjt-countdown-enabled').checked = !!pick(cfg, 'EnableCountdownOverlay', false);
-                var cdDur = pick(cfg, 'CountdownDurationSeconds', 5);
-                if (cdDur < 3) cdDur = 3;
-                if (cdDur > 10) cdDur = 10;
-                $('pjt-countdown-duration').value = cdDur;
-                $('pjt-countdown-title').checked = !!pick(cfg, 'CountdownShowFeatureTitle', true);
-
                 $('pjt-comingsoon-enabled').checked = !!pick(cfg, 'EnableComingSoonTrailers', false);
                 var csCount = pick(cfg, 'ComingSoonTrailerCount', 1);
                 if (csCount < 1) csCount = 1;
@@ -1421,11 +1386,6 @@
             var preloadMode = parseInt($('pjt-preload-mode').value, 10) || 0;
 
             // v1.2.0 numeric clamps
-            var cdDur = parseInt($('pjt-countdown-duration').value, 10);
-            if (isNaN(cdDur)) cdDur = 5;
-            if (cdDur < 3) cdDur = 3;
-            if (cdDur > 10) cdDur = 10;
-
             var csCount = parseInt($('pjt-comingsoon-count').value, 10);
             if (isNaN(csCount)) csCount = 1;
             if (csCount < 1) csCount = 1;
@@ -1483,9 +1443,6 @@
                 EnableStatsTracking: true,
 
                 // v1.2.0
-                EnableCountdownOverlay: $('pjt-countdown-enabled').checked,
-                CountdownDurationSeconds: cdDur,
-                CountdownShowFeatureTitle: $('pjt-countdown-title').checked,
                 EnableComingSoonTrailers: $('pjt-comingsoon-enabled').checked,
                 ComingSoonTrailerCount: csCount,
                 PostRollFolderPath: $('pjt-postroll-path').value.trim(),

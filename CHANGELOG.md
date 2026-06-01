@@ -15,7 +15,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Per-feature opt-out: mark items as "never preroll this".
 - Skip-rate analytics: track at what second users skip prerolls.
 - Outro / post-roll system: play videos after the feature ends.
-- Cinema countdown overlay: 5-4-3-2-1 with feature title card.
 - Coming-soon trailer: prepend a trailer for an unwatched movie.
 - Audio loudness analysis MVP via ffmpeg volumedetect.
 - ~30 unit tests across MaturityRanker, ScheduleRule, CooldownStore, PrerollSelector.

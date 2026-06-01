@@ -217,15 +217,6 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>Item IDs that should NEVER trigger a preroll.</summary>
     public List<Guid> OptedOutFeatureIds { get; set; } = new();
 
-    /// <summary>Show a 5-4-3-2-1 cinema-countdown overlay during the preroll.</summary>
-    public bool EnableCountdownOverlay { get; set; } = false;
-
-    /// <summary>How many seconds the countdown overlay should run.</summary>
-    public int CountdownDurationSeconds { get; set; } = 6;
-
-    /// <summary>Whether to show the feature title in the countdown overlay.</summary>
-    public bool CountdownShowFeatureTitle { get; set; } = true;
-
     /// <summary>Play one or more "coming soon" trailers for an unwatched library item before the feature.</summary>
     public bool EnableComingSoonTrailers { get; set; } = false;
 
