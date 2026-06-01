@@ -93,12 +93,21 @@ public sealed class PrerollIntroProvider : IIntroProvider
         }
 
         // ---- Skip on resume ----
+        // Only treat a non-zero playback position as a "resume" when the
+        // item is NOT already marked Played. Jellyfin keeps the last-known
+        // position on items even after the user finishes them, so the
+        // unrestricted check used to false-trigger on every rewatch of a
+        // previously-watched episode. A genuine resume is in-progress
+        // (Played=false, position>0); a played item with a stale position
+        // is a rewatch and should still get a preroll.
         if (config.SkipOnResume)
         {
             try
             {
                 var data = _userData.GetUserData(user, item);
-                if (data is not null && data.PlaybackPositionTicks > 0)
+                if (data is not null
+                    && data.PlaybackPositionTicks > 0
+                    && !data.Played)
                 {
                     _logger.LogInformation("[Projectionist] resume detected for {Item}, skipping preroll", item.Name);
                     _sessions.RecordPlayback(user.Id);
