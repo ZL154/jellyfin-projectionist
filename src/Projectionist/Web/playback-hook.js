@@ -873,60 +873,107 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
         (fs || document.body).appendChild(overlay);
     }
 
+    // Fires AFTER the preroll ends and BEFORE the feature begins playing.
+    // The video element is reused across queue items: when the preroll ends,
+    // Jellyfin loads the feature into the same <video>. We watch for that
+    // transition and pause the feature for `duration` seconds while the
+    // overlay ticks N..1, then resume. Academy-leader style.
     function attachCountdownToVideo(video) {
         if (attached.has(video)) return;
         attached.add(video);
-        var lastRenderedSecond = null;
-        var isPreroll = false;
+        var lastItemWasPreroll = false; // what we last classified on this element
+        var countdownRunning = false;   // overlay currently active
+        var pendingTimer = null;
 
         function classify() {
-            if (!enabled) return;
-            if (!pathSet) return;
-            var src = video.currentSrc || video.src;
-            var id = parseItemIdFromSrc(src);
-            if (!id) { isPreroll = false; return; }
-            var ac = getApiClient();
-            if (!ac) return;
-            ac.fetch({ url: ac.getUrl('Items/' + id), type: 'GET', dataType: 'json' })
-                .then(function (item) {
-                    isPreroll = !!(item && item.Path && pathSet.has(String(item.Path).toLowerCase()));
-                    dlog('classify', { id: id, isPreroll: isPreroll, name: item && item.Name });
-                })
-                .catch(function () { isPreroll = false; });
+            return new Promise(function (resolve) {
+                if (!enabled || !pathSet) { resolve(false); return; }
+                var src = video.currentSrc || video.src;
+                var id = parseItemIdFromSrc(src);
+                if (!id) { resolve(false); return; }
+                var ac = getApiClient();
+                if (!ac) { resolve(false); return; }
+                ac.fetch({ url: ac.getUrl('Items/' + id), type: 'GET', dataType: 'json' })
+                    .then(function (item) {
+                        var isPre = !!(item && item.Path && pathSet.has(String(item.Path).toLowerCase()));
+                        dlog('classify', { id: id, isPre: isPre, name: item && item.Name, lastWasPreroll: lastItemWasPreroll });
+                        resolve(isPre);
+                    })
+                    .catch(function () { resolve(false); });
+            });
         }
 
-        function maybeRender() {
-            if (!enabled || !isPreroll) return;
-            if (!isFinite(video.duration) || video.duration <= 0) return;
-            var remaining = video.duration - video.currentTime;
-            if (remaining > duration || remaining < 0) {
-                if (lastRenderedSecond !== null) {
+        function startCountdownThenResume() {
+            if (countdownRunning) return;
+            countdownRunning = true;
+            try { video.pause(); } catch (_) {}
+            var n = duration;
+            dlog('start', { duration: duration });
+            function tick() {
+                if (n < 1) {
                     removeOverlay();
-                    lastRenderedSecond = null;
+                    countdownRunning = false;
+                    pendingTimer = null;
+                    try { video.play(); } catch (_) {}
+                    dlog('end', {});
+                    return;
                 }
-                return;
+                renderOverlay(n, '');
+                n--;
+                pendingTimer = setTimeout(tick, 1000);
             }
-            var sec = Math.max(1, Math.ceil(remaining));
-            if (sec !== lastRenderedSecond) {
-                lastRenderedSecond = sec;
-                renderOverlay(sec, '');
-                dlog('render', { sec: sec });
-            }
+            tick();
         }
 
-        video.addEventListener('loadedmetadata', function () {
+        function cancelCountdown() {
+            if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = null; }
             removeOverlay();
-            lastRenderedSecond = null;
-            isPreroll = false;
-            classify();
+            countdownRunning = false;
+        }
+
+        // When new media is about to play (loadedmetadata fires before the
+        // element's first frame), classify it. If we are transitioning from a
+        // preroll to a non-preroll, intercept: pause, countdown, then resume.
+        video.addEventListener('loadedmetadata', function () {
+            cancelCountdown();
+            classify().then(function (isPre) {
+                if (lastItemWasPreroll && !isPre) {
+                    // Preroll -> feature: this is the moment to run the
+                    // academy-leader countdown.
+                    startCountdownThenResume();
+                }
+                lastItemWasPreroll = isPre;
+            });
         });
-        video.addEventListener('playing', function () {
-            if (!isPreroll) classify();
+
+        // Belt-and-braces: also intercept on 'play'. loadedmetadata can fire
+        // before our async classify resolves, so the video may have already
+        // started playing by the time we'd want to pause it. The 'play'
+        // listener gives us a second chance to pause and trigger countdown.
+        video.addEventListener('play', function () {
+            if (countdownRunning) return; // already showing
+            // If we haven't classified the current src yet, classify now.
+            classify().then(function (isPre) {
+                if (lastItemWasPreroll && !isPre && !countdownRunning) {
+                    startCountdownThenResume();
+                }
+                if (!isPre) lastItemWasPreroll = false;
+                else lastItemWasPreroll = true;
+            });
         });
-        video.addEventListener('timeupdate', maybeRender);
-        video.addEventListener('ended', function () { removeOverlay(); lastRenderedSecond = null; });
-        video.addEventListener('emptied', function () { removeOverlay(); lastRenderedSecond = null; });
-        if (video.readyState >= 1) classify();
+
+        // Hooks for state cleanup
+        video.addEventListener('ended', function () {
+            // The current preroll ended. The next 'loadedmetadata' (for the
+            // feature) is what triggers the countdown. Keep lastItemWasPreroll
+            // = true so the transition is detected. Don't cancel the overlay
+            // here — there's no overlay running during an ended event.
+        });
+        video.addEventListener('emptied', cancelCountdown);
+
+        if (video.readyState >= 1) {
+            classify().then(function (isPre) { lastItemWasPreroll = isPre; });
+        }
     }
 
     function sweep() {
