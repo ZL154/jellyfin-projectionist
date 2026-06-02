@@ -24,10 +24,12 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
         services.AddSingleton<PostRollService>();
         services.AddSingleton<ComingSoonPicker>();
         services.AddSingleton<LoudnessAnalyzer>();
+        services.AddSingleton<StreamConcatService>();
         services.AddSingleton<PrerollSelector>(sp =>
             new PrerollSelector(sp.GetService<CooldownStore>()));
         services.AddSingleton<IIntroProvider, PrerollIntroProvider>();
         services.AddSingleton<IStartupFilter, IndexHtmlInjectionFilter>();
+        services.AddSingleton<IStartupFilter, StreamConcatStartupFilter>();
         services.AddHostedService<WebInjector>();
         services.AddHostedService<HideOnStartupService>();
     }
