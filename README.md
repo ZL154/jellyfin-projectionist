@@ -104,6 +104,7 @@ A Jellyfin plugin that plays preroll videos before movies **and** TV episodes. F
 - **Coming-soon trailer** — prepend a trailer from a movie the viewer hasn't watched yet
 - **Loudness check** — ffmpeg `volumedetect` flags prerolls that are much louder or quieter than the rest
 - **Binge-friendly episodes** — when the next episode auto-plays, it gets its own preroll too
+- **Native-app episodes** — optional server-side splicing gives Android TV / iOS / Roku episode prerolls too, with subtitles, resume and intro markers kept in sync
 
 ### 📊 Stats
 
@@ -128,6 +129,22 @@ Jellyfin's player only streams files registered as library items. Projectionist 
 Jellyfin's web/desktop/TV clients hard-code intro fetching to `Type === 'Movie'` only. Episodes never call `/Items/{id}/Intros`, so any plugin that just implements `IIntroProvider` can't do anything for episode playback.
 
 Projectionist works around this with a small JavaScript hook that monkey-patches `playbackManager.play()`. When the user plays an episode, the hook fetches `/Items/{episodeId}/Intros` itself and prepends the result to the play options. The script is injected into Jellyfin's `index.html` via two parallel paths — an in-process ASP.NET `IStartupFilter` middleware AND a registration with the FileTransformation plugin (whichever fires first wins).
+
+### Native apps (Android TV, iOS, Roku, …) — v1.3.0+
+
+Native apps never load that script, so for them Projectionist puts the preroll **inside the episode's stream** on the server. Turn it on under **Episodes in native apps**:
+
+| Setting | What happens |
+|---------|--------------|
+| **Off** (default) | Native apps play episodes without prerolls. Movies still get them. |
+| **Only when already streamed as HLS** | If Jellyfin is already streaming the episode as HLS (the app can't play the file directly), the preroll is spliced in. Nothing else changes. |
+| **Always** | For episodes that get a preroll, direct play is switched off so Jellyfin streams HLS. Video and audio are **copied** where the app supports them (a remux, not a transcode). Episodes without a preroll are untouched. |
+
+How it stays correct:
+
+- The preroll is converted once to **the episode's own format** (H.264/HEVC, AAC/AC3/E-AC3/MP3, TS or fMP4, resolution, frame rate) and cached, so the stream never switches codec mid-way.
+- **External subtitles** are shifted by the preroll length, **progress reports** have it taken off (resume points and "watched" stay right), and **intro/credits markers** are shifted for that app.
+- Anything it can't do safely plays exactly as before: resumed episodes, HDR episodes, subtitles carried inside the HLS stream, unsupported codecs. If the first conversion of a clip takes longer than the configured wait, that episode starts without a preroll and the clip is ready next time.
 
 ---
 
@@ -348,9 +365,9 @@ Projectionist ships its OWN in-process injection via an ASP.NET IStartupFilter m
 
 ### Does this work on Android TV / Roku / iOS native apps?
 
-Movie prerolls — yes (server-side IIntroProvider). Episode prerolls — no. The episode preroll depends on a JavaScript hook injected into Jellyfin Web's index.html. Native clients don't load the web shell, so the JS hook never runs there. Episode prerolls work in Jellyfin Web (browser) and Jellyfin Media Player (which uses the bundled web client).
+Movie prerolls — yes (server-side IIntroProvider). Episode prerolls — yes since v1.3.0, once you turn on **Episodes in native apps** (see [Native apps](#native-apps-android-tv-ios-roku--v130)). It's off by default because "Always" switches those episodes from direct play to an HLS remux.
 
-Since v1.3.0 the server only hands episode intros to web-based clients. Some native apps used to try playing them and flashed a "Playback Error" before the episode started; they now simply play the episode.
+With it off, the server doesn't hand episode intros to native apps at all. Some apps used to try playing them and flashed a "Playback Error" before the episode started.
 
 ### Does it slow down playback start?
 

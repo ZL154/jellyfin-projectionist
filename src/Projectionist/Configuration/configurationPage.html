@@ -808,6 +808,25 @@
                     </div>
                 </div>
 
+                <div class="pjt-card">
+                    <h2>Episodes in native apps</h2>
+                    <div class="pjt-section-hint">Android TV, iOS, Roku and other native apps don't run the web client's episode hook. Projectionist can instead splice the preroll into the episode's stream on the server. Movies already work in every app and aren't affected by this setting.</div>
+                    <div class="pjt-row">
+                        <label class="pjt-label" for="pjt-native-mode">Native app episodes</label>
+                        <select class="pjt-select" id="pjt-native-mode">
+                            <option value="0">Off - no episode prerolls in native apps</option>
+                            <option value="1">Only when the episode is already streamed as HLS</option>
+                            <option value="2">Always - switch episodes with a preroll to HLS</option>
+                        </select>
+                        <div class="pjt-hint">"Always" turns off direct play only for episodes that get a preroll; Jellyfin copies the video and audio where the app supports them, so it's normally a remux, not a transcode. Resumed episodes, HDR episodes and subtitles carried inside the stream play without a preroll.</div>
+                    </div>
+                    <div class="pjt-row">
+                        <label class="pjt-label" for="pjt-native-timeout">Conversion wait (seconds)</label>
+                        <input class="pjt-input" id="pjt-native-timeout" type="number" min="2" max="120" />
+                        <div class="pjt-hint">Each preroll is converted once per episode format and cached. If the first conversion takes longer than this, the episode starts without a preroll and it's ready next time.</div>
+                    </div>
+                </div>
+
                 <div class="pjt-divider-label">Filters</div>
 
                 <div class="pjt-card">
@@ -1081,6 +1100,7 @@
 
         var sessionModeNames = ['EveryPlayback','FirstOfSession','OncePerDay','FirstOfBinge','OncePerHour','OncePerSeriesPerDay'];
         var preloadModeNames = ['Off','Warm','Hot'];
+        var nativeModeNames = ['Off','WhenTranscoding','ForceRemux'];
 
         function toast(msg, error) {
             var el = $('pjt-toast');
@@ -1399,6 +1419,8 @@
                 var preloadMode = parseEnum(pick(cfg, 'FeaturePreloadMode', preloadFallback), preloadModeNames);
                 if (preloadFallback === 1 && preloadMode === 0) preloadMode = 1;
                 $('pjt-preload-mode').value = String(preloadMode);
+                $('pjt-native-mode').value = String(parseEnum(pick(cfg, 'NativeEpisodePrerollMode', 0), nativeModeNames));
+                $('pjt-native-timeout').value = pick(cfg, 'NativePrerollEncodeTimeoutSeconds', 20);
 
                 // ----- v1.2.0 fields -----
                 $('pjt-comingsoon-enabled').checked = !!pick(cfg, 'EnableComingSoonTrailers', false);
@@ -1484,6 +1506,8 @@
                 SkippableAfterSeconds: parseInt($('pjt-skip-after').value, 10) || 0,
                 EnableFeaturePreload: preloadMode !== 0,
                 FeaturePreloadMode: preloadMode,
+                NativeEpisodePrerollMode: parseInt($('pjt-native-mode').value, 10) || 0,
+                NativePrerollEncodeTimeoutSeconds: Math.min(120, Math.max(2, parseInt($('pjt-native-timeout').value, 10) || 20)),
                 EnableStatsTracking: true,
 
                 // v1.2.0

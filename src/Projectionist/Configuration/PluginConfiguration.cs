@@ -37,6 +37,19 @@ public enum FeaturePreloadMode
     Hot = 2,
 }
 
+/// <summary>How native apps (Android TV, iOS, Roku, ...) get episode prerolls.</summary>
+public enum NativeEpisodePrerollMode
+{
+    /// <summary>No episode prerolls in native apps (movies are unaffected).</summary>
+    Off = 0,
+
+    /// <summary>Splice prerolls only when Jellyfin is already streaming the episode over HLS.</summary>
+    WhenTranscoding = 1,
+
+    /// <summary>For episodes that have a preroll, turn off direct play so Jellyfin remuxes to HLS.</summary>
+    ForceRemux = 2,
+}
+
 public sealed class PrerollFolder
 {
     public string Path { get; set; } = string.Empty;
@@ -211,6 +224,21 @@ public class PluginConfiguration : BasePluginConfiguration
     /// info; Hot also opens a small early stream request where Jellyfin exposes one.
     /// </summary>
     public FeaturePreloadMode FeaturePreloadMode { get; set; } = FeaturePreloadMode.Off;
+
+    /// <summary>
+    /// Episode prerolls for native apps, which never run the web hook. The
+    /// preroll is spliced into the episode's HLS stream on the server. Off by
+    /// default: ForceRemux turns off direct play for episodes that get a
+    /// preroll (codecs are copied, not re-encoded, where the app supports them).
+    /// </summary>
+    public NativeEpisodePrerollMode NativeEpisodePrerollMode { get; set; } = NativeEpisodePrerollMode.Off;
+
+    /// <summary>
+    /// Longest the server waits for a preroll to be converted for a native
+    /// stream before starting the episode without it. The result is cached,
+    /// so this only matters the first time a clip meets a new format.
+    /// </summary>
+    public int NativePrerollEncodeTimeoutSeconds { get; set; } = 20;
 
     // ---------- v1.2.0 features ----------
 

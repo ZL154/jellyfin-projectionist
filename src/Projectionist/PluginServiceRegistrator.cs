@@ -1,4 +1,5 @@
 using Jellyfin.Data.Events.Users;
+using Jellyfin.Plugin.Projectionist.Native;
 using Jellyfin.Plugin.Projectionist.Providers;
 using Jellyfin.Plugin.Projectionist.Services;
 using Jellyfin.Plugin.Projectionist.Web;
@@ -30,6 +31,9 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
             new PrerollSelector(sp.GetService<CooldownStore>()));
         services.AddSingleton<IIntroProvider, PrerollIntroProvider>();
         services.AddSingleton<IStartupFilter, IndexHtmlInjectionFilter>();
+        services.AddSingleton<NativePrerollSessions>();
+        services.AddSingleton<PrerollHlsEncoder>();
+        services.AddSingleton<IStartupFilter, NativePrerollMiddleware>();
         services.AddHostedService<WebInjector>();
         services.AddHostedService<HideOnStartupService>();
         services.AddScoped<IEventConsumer<UserCreatedEventArgs>, HideLibraryOnUserCreated>();

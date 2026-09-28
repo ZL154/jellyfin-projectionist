@@ -69,6 +69,17 @@ public sealed class PrerollIntroProvider : IIntroProvider
     public string Name => "Projectionist";
 
     public Task<IEnumerable<IntroInfo>> GetIntros(BaseItem item, User user)
+        => GetIntrosCore(item, user, forNativeHls: false);
+
+    /// <summary>
+    /// Preroll selection for a native app's episode, which gets its prerolls
+    /// spliced into the HLS stream instead of through /Intros. Same rules,
+    /// stats and cooldowns as GetIntros, minus the web-client gate.
+    /// </summary>
+    internal Task<IEnumerable<IntroInfo>> GetIntrosForNativeHls(BaseItem item, User user)
+        => GetIntrosCore(item, user, forNativeHls: true);
+
+    private Task<IEnumerable<IntroInfo>> GetIntrosCore(BaseItem item, User user, bool forNativeHls)
     {
         if (item is null || user is null)
             return Task.FromResult(Enumerable.Empty<IntroInfo>());
@@ -111,7 +122,7 @@ public sealed class PrerollIntroProvider : IIntroProvider
             "[Projectionist] /Intros called: item={Name} type={Type} client={Client}",
             item.Name, item.GetType().Name, clientName ?? "(unknown)");
 
-        if (item is Episode && !IsEpisodeIntroSupportedClient())
+        if (item is Episode && !forNativeHls && !IsEpisodeIntroSupportedClient())
         {
             _logger.LogDebug(
                 "[Projectionist] /Intros skipped (non-Web client): item={Name} client={Client}",
@@ -311,15 +322,19 @@ public sealed class PrerollIntroProvider : IIntroProvider
         var m = ClientNameRegex.Match(auth);
         if (!m.Success) return true;
 
-        var client = m.Groups[1].Value ?? string.Empty;
-        var lower = client.ToLowerInvariant();
-        // Whitelist: clients whose play queue we KNOW handles intros
-        // correctly. Jellyfin Web for browsers + Jellyfin Media Player
-        // (Qt-wrapped jellyfin-web). Everything else is blocked for
-        // episode-only intros — movies are still served to all clients.
-        if (lower.Contains("web")) return true;
-        if (lower.Contains("media player")) return true;
-        return false;
+        return IsWebClient(m.Groups[1].Value);
+    }
+
+    /// <summary>
+    /// Clients that run jellyfin-web and so get the playback hook: browsers
+    /// and Jellyfin Media Player (Qt-wrapped jellyfin-web). Everything else
+    /// is a native app.
+    /// </summary>
+    internal static bool IsWebClient(string? client)
+    {
+        var lower = (client ?? string.Empty).ToLowerInvariant();
+        return lower.Contains("web", StringComparison.Ordinal)
+            || lower.Contains("media player", StringComparison.Ordinal);
     }
 
     private bool IsKnownPrerollPath(string? itemPath, PluginConfiguration config)
