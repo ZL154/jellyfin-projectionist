@@ -12,10 +12,10 @@
 ```
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Jellyfin-10.11%2B-0b0b0b?style=for-the-badge&labelColor=000000&color=2b2b2b" />
+  <img src="https://img.shields.io/badge/Jellyfin-10.11%20%7C%2012-0b0b0b?style=for-the-badge&labelColor=000000&color=2b2b2b" />
   <img src="https://img.shields.io/badge/Type-Plugin-E50914?style=for-the-badge&labelColor=000000&color=E50914" />
   <img src="https://img.shields.io/badge/System-Prerolls-0b0b0b?style=for-the-badge&labelColor=000000&color=2b2b2b" />
-  <img src="https://img.shields.io/badge/Version-1.2.0-0b0b0b?style=for-the-badge&labelColor=000000&color=2b2b2b" />
+  <img src="https://img.shields.io/badge/Version-1.3.0-0b0b0b?style=for-the-badge&labelColor=000000&color=2b2b2b" />
   <img src="https://img.shields.io/badge/License-MIT-0b0b0b?style=for-the-badge&labelColor=000000&color=2b2b2b" />
 </p>
 
@@ -98,11 +98,18 @@ A Jellyfin plugin that plays preroll videos before movies **and** TV episodes. F
 - **Trailer mode** — chain N local trailers from the feature's own metadata before it plays. Cinema-style "and now our feature presentation"
 - **Skippable prerolls** — skip-button overlay during preroll playback with a configurable min-seconds delay
 - **Feature preload** — best-effort web-client warmup that prepares Jellyfin playback info for the movie or episode while prerolls are running
+- **Opt-outs** — "never preroll this": pick movies, whole series or single episodes from a built-in library browser (or paste a GUID). A series entry covers every episode under it
+- **Genre rules** — library rules can match on the feature's genres
+- **Post-rolls** — a separate folder of outros that play after the feature ends
+- **Coming-soon trailer** — prepend a trailer from a movie the viewer hasn't watched yet
+- **Loudness check** — ffmpeg `volumedetect` flags prerolls that are much louder or quieter than the rest
+- **Binge-friendly episodes** — when the next episode auto-plays, it gets its own preroll too
 
 ### 📊 Stats
 
 - Per-file playback counts + last-played timestamps
 - Per-user playback counts
+- Skip rate + average seconds-before-skip per preroll
 - Persisted to `<jellyfin>/data/plugins/configurations/Projectionist.stats.json` so it survives restarts
 - Reset button
 
@@ -283,24 +290,28 @@ The hidden internal library exists because Jellyfin's player resolves `MediaSour
 
 ## 🏗️ Building from source
 
-Requires .NET SDK 9.0.
+Requires the .NET 9 **and** .NET 10 SDKs — one source tree builds two plugins:
+
+| Target | Jellyfin | Package version | targetAbi |
+|--------|----------|-----------------|-----------|
+| `net9.0` | 10.11.x | `X.Y.Z.0` | `10.11.0.0` |
+| `net10.0` | 12.x | `X.Y.Z.1` | `12.0.0.0` |
 
 ```bash
 git clone https://github.com/ZL154/jellyfin-projectionist
 cd jellyfin-projectionist
-dotnet build src/Projectionist/Projectionist.csproj -c Release
-# DLL output: src/Projectionist/bin/Release/net9.0/Jellyfin.Plugin.Projectionist.dll
-# meta.json:  src/Projectionist/meta.json
+dotnet build Projectionist.sln -c Release
+dotnet test Projectionist.sln -c Release --no-build
+# DLLs: src/Projectionist/bin/Release/{net9.0,net10.0}/Jellyfin.Plugin.Projectionist.dll
 ```
 
-Or use the bundled PowerShell build script (zips everything for upload):
+Or use the bundled PowerShell build script, which produces both release zips (with a per-package `meta.json`) and prints their MD5s for `manifest.json`:
 
 ```powershell
 ./build/build.ps1
-# Produces: build-output/Projectionist_<version>.zip
+# Produces: build-output/projectionist_<X.Y.Z>.0.zip  (Jellyfin 10.11)
+#           build-output/projectionist_<X.Y.Z>.1.zip  (Jellyfin 12)
 ```
-
-Targets Jellyfin 10.11 ABI (`Jellyfin.Controller` 10.11.0).
 
 ---
 
@@ -308,9 +319,11 @@ Targets Jellyfin 10.11 ABI (`Jellyfin.Controller` 10.11.0).
 
 | Jellyfin | Status | Notes |
 |----------|--------|-------|
+| 12.x | ✅ supported (v1.3.0+) | Separate .NET 10 build (`X.Y.Z.1`). The plugin catalog picks it automatically. |
+| 10.11.11+ | ✅ supported (v1.3.0+) | These versions compress `index.html`; v1.3.0 fixes the "failed to decode" blank web UI ([#7](https://github.com/ZL154/jellyfin-projectionist/issues/7)). |
 | 10.11.9 - 10.11.10 | ✅ supported (v1.1.1+) | Plugin includes an ABI shim for the removal of IUserManager.Users from the interface. |
 | 10.11.0 - 10.11.8 | ✅ supported | Original target ABI. |
-| 10.10.x | ⚠️ untested | Needs ABI bump in csproj + meta.json. |
+| 10.10.x | ❌ not supported | |
 
 **Zero hard dependencies.** Both movie and episode prerolls work out of the box on standard Jellyfin installs (Projectionist injects its episode hook via its own ASP.NET middleware).
 
@@ -336,6 +349,8 @@ Projectionist ships its OWN in-process injection via an ASP.NET IStartupFilter m
 ### Does this work on Android TV / Roku / iOS native apps?
 
 Movie prerolls — yes (server-side IIntroProvider). Episode prerolls — no. The episode preroll depends on a JavaScript hook injected into Jellyfin Web's index.html. Native clients don't load the web shell, so the JS hook never runs there. Episode prerolls work in Jellyfin Web (browser) and Jellyfin Media Player (which uses the bundled web client).
+
+Since v1.3.0 the server only hands episode intros to web-based clients. Some native apps used to try playing them and flashed a "Playback Error" before the episode started; they now simply play the episode.
 
 ### Does it slow down playback start?
 

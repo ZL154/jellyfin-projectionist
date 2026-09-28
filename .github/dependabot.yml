@@ -8,6 +8,11 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
+    # The Jellyfin references pick the ABI each package targets (10.11.0
+    # for net9, 12.0.0 for net10). Bumping them narrows which servers can
+    # load the plugin, so they are only ever moved by hand.
+    ignore:
+      - dependency-name: "Jellyfin.*"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

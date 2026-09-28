@@ -437,7 +437,12 @@ public sealed class HiddenLibraryManager
         EnableTrickplayImageExtraction = false,
         ExtractTrickplayImagesDuringLibraryScan = false,
         EnableLUFSScan = false,
+        // Obsolete in favour of per-type fetcher lists, but still present
+        // and honoured in 10.11 and 12.0; it is the one switch that keeps
+        // preroll clips from triggering internet metadata lookups.
+#pragma warning disable CS0618
         EnableInternetProviders = false,
+#pragma warning restore CS0618
         EnableAutomaticSeriesGrouping = false,
         EnableEmbeddedTitles = false,
         EnableEmbeddedExtrasTitles = false,

@@ -1,7 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <!-- One source tree, two binaries. Jellyfin 10.11 runs on .NET 9 and
+         Jellyfin 12 on .NET 10, and the 12.x Jellyfin packages only ship
+         net10.0 assets, so a single DLL cannot serve both. -->
+    <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
     <RootNamespace>Jellyfin.Plugin.Projectionist</RootNamespace>
     <AssemblyName>Jellyfin.Plugin.Projectionist</AssemblyName>
     <Nullable>enable</Nullable>
@@ -9,15 +12,45 @@
     <LangVersion>latest</LangVersion>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <NoWarn>CS1591;CA1819;CA1308;CA1822;CA1031</NoWarn>
-    <Version>1.2.0</Version>
+    <Version>1.3.0</Version>
     <Authors>AhmedMedia</Authors>
     <Description>Plays preroll videos before movies and episodes in Jellyfin. Folder-based, episode-aware, with a properly designed admin UI.</Description>
   </PropertyGroup>
 
+  <!-- Each release ships two zips: X.Y.Z.0 (net9, Jellyfin 10.11) and
+       X.Y.Z.1 (net10, Jellyfin 12). The fourth part must be stamped into
+       the assembly too: Jellyfin shows the assembly version on the
+       dashboard but matches the manifest version for uninstall and the
+       plugin image, so both have to agree. Version itself stays X.Y.Z. -->
+  <PropertyGroup>
+    <PjtVersionBase>$([System.Text.RegularExpressions.Regex]::Match('$(Version)', '^[0-9]+\.[0-9]+\.[0-9]+(?=[-+]|$)').Value)</PjtVersionBase>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net9.0'">
+    <JellyfinVersion>10.11.0</JellyfinVersion>
+    <AssemblyVersion>$(PjtVersionBase).0</AssemblyVersion>
+    <FileVersion>$(PjtVersionBase).0</FileVersion>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <JellyfinVersion>12.0.0</JellyfinVersion>
+    <AssemblyVersion>$(PjtVersionBase).1</AssemblyVersion>
+    <FileVersion>$(PjtVersionBase).1</FileVersion>
+  </PropertyGroup>
+
+  <Target Name="PjtCheckVersion" BeforeTargets="BeforeBuild">
+    <Error Condition="'$(PjtVersionBase)' == ''"
+           Text="Version '$(Version)' has to be X.Y.Z (optionally with a prerelease suffix). Each package adds its own fourth part: .0 for Jellyfin 10.11, .1 for Jellyfin 12." />
+  </Target>
+
   <ItemGroup>
-    <PackageReference Include="Jellyfin.Controller" Version="10.11.0" />
-    <PackageReference Include="Jellyfin.Model" Version="10.11.0" />
-    <PackageReference Include="Jellyfin.Database.Implementations" Version="10.11.0" />
+    <PackageReference Include="Jellyfin.Controller" Version="$(JellyfinVersion)" />
+    <PackageReference Include="Jellyfin.Model" Version="$(JellyfinVersion)" />
+    <PackageReference Include="Jellyfin.Database.Implementations" Version="$(JellyfinVersion)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Projectionist.Tests" />
   </ItemGroup>
 
   <ItemGroup>

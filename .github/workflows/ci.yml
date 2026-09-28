@@ -19,17 +19,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # net9.0 builds the Jellyfin 10.11 package, net10.0 the Jellyfin 12 one.
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: |
+            9.0.x
+            10.0.x
       - name: Restore
-        run: dotnet restore
-      - name: Build
-        run: dotnet build src/Projectionist/Projectionist.csproj -c Release --no-restore -warnaserror
-      - name: Test
-        run: |
-          if [ -f tests/Projectionist.Tests/Projectionist.Tests.csproj ]; then
-            dotnet test tests/Projectionist.Tests/Projectionist.Tests.csproj --no-restore --verbosity normal
-          else
-            echo "No test project found"
-          fi
+        run: dotnet restore Projectionist.sln
+      - name: Build (net9.0 + net10.0)
+        run: dotnet build Projectionist.sln -c Release --no-restore -warnaserror
+      - name: Test (net9.0 + net10.0)
+        run: dotnet test Projectionist.sln -c Release --no-build --verbosity normal
+      - name: Check injected JavaScript parses
+        run: node --check src/Projectionist/Web/playback-hook.js
