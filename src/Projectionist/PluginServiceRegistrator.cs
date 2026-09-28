@@ -1,7 +1,9 @@
+using Jellyfin.Data.Events.Users;
 using Jellyfin.Plugin.Projectionist.Providers;
 using Jellyfin.Plugin.Projectionist.Services;
 using Jellyfin.Plugin.Projectionist.Web;
 using MediaBrowser.Controller;
+using MediaBrowser.Controller.Events;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Plugins;
 using Microsoft.AspNetCore.Hosting;
@@ -30,5 +32,6 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
         services.AddSingleton<IStartupFilter, IndexHtmlInjectionFilter>();
         services.AddHostedService<WebInjector>();
         services.AddHostedService<HideOnStartupService>();
+        services.AddScoped<IEventConsumer<UserCreatedEventArgs>, HideLibraryOnUserCreated>();
     }
 }

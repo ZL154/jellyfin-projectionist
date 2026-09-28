@@ -40,6 +40,7 @@ public sealed class HideOnStartupService : IHostedService
                     _logger.LogDebug("[Projectionist] no managed library at startup, skipping auto-hide");
                     return;
                 }
+                await _hiddenLibrary.RepairExistingAsync().ConfigureAwait(false);
                 await _hiddenLibrary.HideFromAllUsersAsync().ConfigureAwait(false);
                 _logger.LogInformation("[Projectionist] auto-applied hide on startup");
             }

@@ -1167,8 +1167,7 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
         if (!nowPlayingItem) {
             try { nowPlayingItem = playbackManager.currentItem && playbackManager.currentItem(); } catch (_) {}
         }
-        if (!nowPlayingItem || nowPlayingItem.Type !== 'Episode') return;
-        if (!nowPlayingItem.SeriesId) return;
+        if (!nowPlayingItem) return;
 
         // Strict natural-end check. Require BOTH a positive runtime AND
         // a position at or beyond 85% of it. Without this, a "show only
@@ -1185,6 +1184,14 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
             return;
         }
 
+        // Anything that isn't a series episode (movies, music videos) has
+        // no "next" to chain: it's the end of the session, so post-rolls.
+        // The server declines for prerolls/post-rolls themselves.
+        if (nowPlayingItem.Type !== 'Episode' || !nowPlayingItem.SeriesId) {
+            playPostRolls(playbackManager, nowPlayingItem);
+            return;
+        }
+
         // ---- SYNC FAST PATH ----
         // If we pre-warmed during the back half of this episode (see
         // maybePrefetchNextUp), we already know the next-up item and the
@@ -1194,7 +1201,9 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
         // the user back to the home screen between this episode ending
         // and the next one starting.
         if (__pjtAutoNextEnabled === false) {
-            // user explicitly disabled auto-next-episode
+            // user explicitly disabled auto-next-episode: this is the end
+            // of the session.
+            playPostRolls(playbackManager, nowPlayingItem);
             return;
         }
         if (__pjtPrewarmed
@@ -1224,6 +1233,7 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
         apiClient.getCurrentUser().then(function (user) {
             if (!user || !user.Configuration || !user.Configuration.EnableNextEpisodeAutoPlay) {
                 // user disabled auto-next in their settings; respect it
+                playPostRolls(playbackManager, nowPlayingItem);
                 return null;
             }
             // Use getEpisodes with StartItemId to get the episode AFTER
@@ -1236,7 +1246,12 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
                 Fields: 'RunTimeTicks,MediaSourceCount'
             });
         }).then(function (eps) {
-            if (!eps || !Array.isArray(eps.Items) || eps.Items.length < 2) return;
+            if (eps === null) return; // auto-next off, handled above
+            if (!eps || !Array.isArray(eps.Items) || eps.Items.length < 2) {
+                // Last episode of the series.
+                playPostRolls(playbackManager, nowPlayingItem);
+                return;
+            }
             var nextEp = eps.Items[1];
             if (!nextEp || !nextEp.Id) return;
             // Don't loop on the same episode (e.g. if it's still unwatched
@@ -1266,82 +1281,32 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
         });
     }
 
-    waitForPlaybackManager(patch);
-})();
-
-// ============== Post-roll hook (MVP) ==============
-// Listen for playbackstop on a FEATURE (not on a preroll/post-roll itself).
-// When the feature stops, fetch /Plugins/Projectionist/PostRoll/Picks and
-// log the candidate count. Actual playback requires items in the hidden
-// library and will be wired up in a future patch release.
-(function () {
-    'use strict';
-
-    function tryRequire(name) {
-        try {
-            if (window.require) return window.require(name);
-            if (window.RequireJS) return window.RequireJS(name);
-        } catch (_) {}
-        return null;
-    }
-
-    function getPlaybackManager() {
-        return window.playbackManager || tryRequire('playbackManager');
-    }
-
-    function getEvents() {
-        return window.Events || tryRequire('events') || tryRequire('Events');
-    }
-
-    function getApiClient() {
-        if (window.ApiClient) return window.ApiClient;
-        if (window.connectionManager && typeof connectionManager.currentApiClient === 'function') {
-            return connectionManager.currentApiClient();
-        }
-        return null;
-    }
-
-    function isPrerollItem(item) {
-        if (!item) return false;
-        if (item.SeriesName === 'Projectionist Prerolls' ||
-            item.ParentName === 'Projectionist Prerolls' ||
-            item.CollectionName === 'Projectionist Prerolls') return true;
-        return false;
-    }
-
-    function attachPostRoll() {
-        var events = getEvents();
-        var pm = getPlaybackManager();
-        if (!events || !pm) {
-            setTimeout(attachPostRoll, 400);
-            return;
-        }
-        events.on(pm, 'playbackstop', function (e, stopInfo) {
-            try {
-                // Guard: don't trigger if we're stopping a preroll/post-roll itself.
-                if (window.__projectionistPostRollPlaying === true) return;
-                var item = null;
-                try {
-                    if (stopInfo && stopInfo.item) item = stopInfo.item;
-                    else if (stopInfo && stopInfo.mediaInfo) item = stopInfo.mediaInfo;
-                    else if (typeof pm.currentItem === 'function') item = pm.currentItem();
-                } catch (_) {}
-                if (isPrerollItem(item)) return;
-
-                var ac = getApiClient();
-                if (!ac) return;
-                ac.fetch({ url: ac.getUrl('Plugins/Projectionist/PostRoll/Picks'), type: 'GET', dataType: 'json' })
-                    .then(function (res) {
-                        var items = (res && (res.Items || res.items)) || [];
-                        try { console.log('[Projectionist] post-roll candidates:', items.length); } catch (_) {}
-                        // MVP: log only. Future patch release will play the picks
-                        // (requires items to be addressable from the hidden library).
-                    })
-                    .catch(function () {});
-            } catch (_) {}
+    /**
+     * Play post-roll clips after `feature` ended naturally with nothing
+     * queued after it. The server decides eligibility (content type,
+     * opt-outs, user rules) and returns nothing when `feature` is itself a
+     * preroll or post-roll, so a post-roll ending never chains another.
+     */
+    function playPostRolls(playbackManager, feature) {
+        var apiClient = getApiClient();
+        if (!apiClient || !feature || !feature.Id) return;
+        apiClient.fetch({
+            url: apiClient.getUrl('Plugins/Projectionist/PostRoll/Picks', { featureId: feature.Id }),
+            type: 'GET',
+            dataType: 'json'
+        }).then(function (picks) {
+            var ids = (Array.isArray(picks) ? picks : []).map(function (p) { return p.ItemId; }).filter(Boolean);
+            if (!ids.length) return;
+            __pjtAutoNext.lastFiredAtMs = Date.now();
+            log('post-roll: playing', ids.length, 'clip(s) after', feature.Name || feature.Id);
+            try { playbackManager.play({ ids: ids, serverId: apiClient.serverId() }); }
+            catch (err) { console.warn(TAG, 'post-roll play failed', err); }
+        }).catch(function (err) {
+            console.warn(TAG, 'post-roll lookup failed', err);
         });
     }
-    attachPostRoll();
+
+    waitForPlaybackManager(patch);
 })();
 
 // ============== Skip button (video-element fallback) ==============
@@ -1360,7 +1325,6 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
     var BTN_ID = 'pjt-skip-btn';
     var STYLE_ID = 'pjt-skip-style-v2';
     var ITEM_CACHE = {}; // itemId -> isPreroll
-    var PREROLL_PATHS = null; // Set<string> populated from /Plugins/Projectionist/Prerolls
     var enabled = true;
     var minSkipSeconds = 0;
     var configLoadedV2 = false;
@@ -1399,9 +1363,6 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
                 minSkipSeconds = cfg.SkippableAfterSeconds || 0;
                 configLoadedV2 = true;
                 dlog('config-loaded', { enabled: enabled, minSkipSeconds: minSkipSeconds });
-                // Pre-warm the preroll-path cache so the very first playback
-                // doesn't have to wait on /Prerolls inside isPrerollItemId.
-                loadPrerollPaths();
             })
             .catch(function (e) {
                 dlog('config-failed', { msg: String(e) });
@@ -1448,58 +1409,24 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
         return m ? m[1] : null;
     }
 
-    function loadPrerollPaths() {
-        var ac = getApiClient();
-        if (!ac) return Promise.resolve(null);
-        return ac.fetch({ url: ac.getUrl('Plugins/Projectionist/Prerolls'), type: 'GET', dataType: 'json' })
-            .then(function (data) {
-                var set = new Set();
-                (data && data.Files ? data.Files : []).forEach(function (f) {
-                    if (f && f.Path) set.add(String(f.Path).toLowerCase());
-                });
-                PREROLL_PATHS = set;
-                dlog('preroll-paths-loaded', { count: set.size });
-                return set;
-            })
-            .catch(function (e) {
-                dlog('preroll-paths-fail', { msg: String(e) });
-                return null;
-            });
-    }
-
-    function ensurePrerollPaths() {
-        if (PREROLL_PATHS !== null) return Promise.resolve(PREROLL_PATHS);
-        return loadPrerollPaths();
-    }
-
+    // Asks the server whether an item is one of our clips. Uses the
+    // user-level Clip endpoint: the preroll list is admin-only, so for
+    // regular viewers the old path lookup always missed.
+    var CLIP_FILE = {}; // itemId -> preroll file name (for skip reports)
     function isPrerollItemId(itemId) {
         if (!itemId) return Promise.resolve(false);
         if (ITEM_CACHE[itemId] !== undefined) return Promise.resolve(ITEM_CACHE[itemId]);
         var ac = getApiClient();
         if (!ac) return Promise.resolve(false);
-        return Promise.all([
-            ac.fetch({ url: ac.getUrl('Items/' + itemId), type: 'GET', dataType: 'json' }).catch(function () { return null; }),
-            ensurePrerollPaths(),
-        ]).then(function (results) {
-            var item = results[0];
-            var paths = results[1];
-            if (!item) return false;
-            var byPath = paths && item.Path && paths.has(String(item.Path).toLowerCase());
-            var byName = !!item && (
-                item.SeriesName === 'Projectionist Prerolls' ||
-                item.ParentName === 'Projectionist Prerolls' ||
-                item.CollectionName === 'Projectionist Prerolls' ||
-                item.GrandparentName === 'Projectionist Prerolls'
-            );
-            var verdict = byPath || byName;
-            ITEM_CACHE[itemId] = verdict;
-            dlog('item-resolved', {
-                id: itemId, name: item && item.Name, path: item && item.Path,
-                byPath: !!byPath, byName: !!byName, verdict: verdict,
-                pathCount: paths ? paths.size : 0,
-            });
-            return verdict;
-        });
+        return ac.fetch({ url: ac.getUrl('Plugins/Projectionist/Clip/' + itemId), type: 'GET', dataType: 'json' })
+            .then(function (info) {
+                var verdict = !!(info && info.IsClip && info.Kind === 'preroll');
+                ITEM_CACHE[itemId] = verdict;
+                if (verdict && info.FileName) CLIP_FILE[itemId] = info.FileName;
+                dlog('item-resolved', { id: itemId, verdict: verdict, kind: info && info.Kind });
+                return verdict;
+            })
+            .catch(function () { return false; });
     }
 
     var currentPrerollFileName = null;
@@ -1577,21 +1504,7 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
             // lookup was in flight.
             if (parseItemIdFromSrc(video.currentSrc || video.src) !== id) return;
             if (!isPre) { hideSkip(); return; }
-            // Track filename for skip-rate reporting.
-            var ac = getApiClient();
-            if (ac) {
-                ac.fetch({ url: ac.getUrl('Items/' + id), type: 'GET', dataType: 'json' })
-                    .then(function (item) {
-                        if (item && item.Path) {
-                            var p = String(item.Path);
-                            var slash = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
-                            currentPrerollFileName = slash >= 0 ? p.substring(slash + 1) : p;
-                        } else if (item && item.Name) {
-                            currentPrerollFileName = item.Name;
-                        }
-                    })
-                    .catch(function () {});
-            }
+            currentPrerollFileName = CLIP_FILE[id] || null;
             cancelReveal();
             if (minSkipSeconds > 0) {
                 revealTimer = setTimeout(function () {

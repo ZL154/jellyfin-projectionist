@@ -89,9 +89,11 @@ public sealed class PrerollIntroProvider : IIntroProvider
         // Jellyfin's native playWithIntros is now calling /Intros on that
         // intro item too), return empty. Otherwise PrerollIntroProvider
         // would chain "intro of intro of intro" indefinitely.
-        if (IsKnownPrerollPath(item.Path, config))
+        // The hidden library also holds post-rolls, which must not get
+        // prerolls of their own either.
+        if (IsKnownPrerollPath(item.Path, config) || _hiddenLibrary.IsManagedItem(item))
         {
-            _logger.LogDebug("[Projectionist] item {Item} is itself a preroll, skipping recursion", item.Name);
+            _logger.LogDebug("[Projectionist] item {Item} is itself a preroll/post-roll, skipping recursion", item.Name);
             return Task.FromResult(Enumerable.Empty<IntroInfo>());
         }
 
@@ -253,7 +255,7 @@ public sealed class PrerollIntroProvider : IIntroProvider
         return Task.FromResult<IEnumerable<IntroInfo>>(intros);
     }
 
-    private static bool IsContentTypeEnabled(BaseItem item, PluginConfiguration config) => item switch
+    internal static bool IsContentTypeEnabled(BaseItem item, PluginConfiguration config) => item switch
     {
         Movie => config.EnableForMovies,
         Episode => config.EnableForEpisodes,
@@ -261,7 +263,7 @@ public sealed class PrerollIntroProvider : IIntroProvider
         _ => false,
     };
 
-    private static bool UserAllowed(Guid userId, PluginConfiguration config) => config.UserMode switch
+    internal static bool UserAllowed(Guid userId, PluginConfiguration config) => config.UserMode switch
     {
         UserMode.OnlyIncluded => config.UserIds is { Count: > 0 } && config.UserIds.Contains(userId),
         UserMode.AllExceptExcluded => config.UserIds is null || !config.UserIds.Contains(userId),

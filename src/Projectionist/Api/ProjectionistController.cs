@@ -325,40 +325,12 @@ public sealed class ProjectionistController : ControllerBase
         return NoContent();
     }
 
-    [HttpPost("SkipReport")]
-    [Authorize]
-    public ActionResult RecordSkip([FromBody] SkipReportRequest req)
-    {
-        if (req is null || string.IsNullOrWhiteSpace(req.FileName)) return BadRequest("FileName required");
-        if (req.SecondsBeforeSkip < 0) req.SecondsBeforeSkip = 0;
-        _stats.RecordSkip(req.FileName, req.SecondsBeforeSkip);
-        return NoContent();
-    }
-
     [HttpGet("PostRoll/Files")]
     public ActionResult<IEnumerable<DiscoveryFile>> ListPostRolls()
     {
         var cfg = Plugin.Instance?.Configuration ?? new PluginConfiguration();
         var items = _postRoll.Discover(cfg);
         return Ok(items.Select(i => new DiscoveryFile
-        {
-            FileName = i.FileName,
-            Path = i.Path,
-            SizeBytes = i.FileSizeBytes,
-            LastModifiedUtc = i.LastModifiedUtc,
-            Tags = i.Tags,
-            Weight = i.Weight,
-            SourceFolder = i.SourceFolder,
-        }).ToList());
-    }
-
-    [HttpGet("PostRoll/Picks")]
-    [Authorize]
-    public ActionResult<IEnumerable<DiscoveryFile>> PickPostRolls()
-    {
-        var cfg = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-        var picks = _postRoll.Pick(cfg, Math.Max(0, cfg.PostRollCount));
-        return Ok(picks.Select(i => new DiscoveryFile
         {
             FileName = i.FileName,
             Path = i.Path,

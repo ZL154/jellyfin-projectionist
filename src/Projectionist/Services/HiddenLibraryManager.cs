@@ -191,6 +191,7 @@ public sealed class HiddenLibraryManager
                 _logger.LogInformation(
                     "[Projectionist] hidden library already correct at {Folders}",
                     string.Join(", ", existingFolders));
+                ApplyLibraryOptions(existing, existingFolders);
                 await HideFromAllUsersAsync();
                 return;
             }
@@ -437,12 +438,24 @@ public sealed class HiddenLibraryManager
         EnableTrickplayImageExtraction = false,
         ExtractTrickplayImagesDuringLibraryScan = false,
         EnableLUFSScan = false,
-        // Obsolete in favour of per-type fetcher lists, but still present
-        // and honoured in 10.11 and 12.0; it is the one switch that keeps
-        // preroll clips from triggering internet metadata lookups.
+        // Obsolete, and no longer enough on its own: on 10.11.11+ and 12 a
+        // clip named "outro-green" was still matched online to "The Grass Is
+        // Greener". The per-type fetcher lists below are what stop it; an
+        // empty list means "no fetchers" for that type. The flag is kept for
+        // older 10.11 builds.
 #pragma warning disable CS0618
         EnableInternetProviders = false,
 #pragma warning restore CS0618
+        TypeOptions = new[] { "Movie", "Video", "MusicVideo" }
+            .Select(t => new TypeOptions
+            {
+                Type = t,
+                MetadataFetchers = Array.Empty<string>(),
+                MetadataFetcherOrder = Array.Empty<string>(),
+                ImageFetchers = Array.Empty<string>(),
+                ImageFetcherOrder = Array.Empty<string>(),
+            })
+            .ToArray(),
         EnableAutomaticSeriesGrouping = false,
         EnableEmbeddedTitles = false,
         EnableEmbeddedExtrasTitles = false,
@@ -458,10 +471,69 @@ public sealed class HiddenLibraryManager
         MediaSegmentProviderOrder = Array.Empty<string>(),
     };
 
+    /// <summary>
+    /// Startup maintenance for an existing library: bring its options up to
+    /// date, and reset clips that an older version let the online providers
+    /// match to real titles (a clip named "outro-green" became "The Grass Is
+    /// Greener", poster and all). Those clips go back to their file name.
+    /// </summary>
+    public async Task RepairExistingAsync()
+    {
+        var existing = GetExisting();
+        if (existing is null) return;
+        ApplyLibraryOptions(existing, existing.Locations ?? Array.Empty<string>());
+
+        var root = GetLibraryRootFolder();
+        if (root is null) return;
+        var reset = 0;
+        foreach (var clip in root.GetRecursiveChildren(c => c is Video && c.ProviderIds is { Count: > 0 }))
+        {
+            if (string.IsNullOrEmpty(clip.Path)) continue;
+            clip.ProviderIds.Clear();
+            clip.Name = Path.GetFileNameWithoutExtension(clip.Path);
+            clip.Overview = null;
+            clip.Genres = Array.Empty<string>();
+            clip.OfficialRating = null;
+            clip.ProductionYear = null;
+            clip.PremiereDate = null;
+            clip.CommunityRating = null;
+            clip.ImageInfos = Array.Empty<ItemImageInfo>();
+            await clip.UpdateToRepositoryAsync(ItemUpdateType.MetadataEdit, CancellationToken.None).ConfigureAwait(false);
+            reset++;
+        }
+
+        if (reset > 0)
+        {
+            _logger.LogInformation("[Projectionist] reset online metadata on {Count} clip(s)", reset);
+        }
+    }
+
+    /// <summary>
+    /// Libraries created by older versions keep the options they were made
+    /// with, so bring an existing one up to date (the online-metadata fix
+    /// above would otherwise only reach new installs).
+    /// </summary>
+    private void ApplyLibraryOptions(VirtualFolderInfo existing, IReadOnlyList<string> folders)
+    {
+        try
+        {
+            if (!Guid.TryParse(existing.ItemId, out var id)) return;
+            if (_libraryManager.GetItemById(id) is not CollectionFolder folder) return;
+            folder.UpdateLibraryOptions(BuildLibraryOptions(folders));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[Projectionist] could not update hidden library options");
+        }
+    }
+
     private static List<string> ResolveConfiguredFolders(PluginConfiguration config)
     {
+        // Post-rolls live in the same hidden library: a clip has to be a
+        // library item before any client can play it.
         return PrerollDiscoveryService.ResolveFolders(config)
             .Select(f => f.Path)
+            .Append(config.PostRollFolderPath)
             .Where(p => !string.IsNullOrWhiteSpace(p))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
