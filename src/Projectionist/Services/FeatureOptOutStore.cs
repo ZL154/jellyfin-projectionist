@@ -5,6 +5,8 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using MediaBrowser.Common.Configuration;
+using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.TV;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.Projectionist.Services;
@@ -12,6 +14,10 @@ namespace Jellyfin.Plugin.Projectionist.Services;
 /// <summary>
 /// Tracks per-feature opt-outs: "never play a preroll before this item."
 /// Persisted to plugin config dir as Projectionist.optouts.json.
+///
+/// As of v1.2.0, a single entry can cover an entire series — adding a
+/// Series GUID opts out every Episode (and Season) under it via the
+/// <see cref="IsOptedOut(BaseItem)"/> overload, which walks ancestors.
 /// </summary>
 public sealed class FeatureOptOutStore
 {
@@ -31,6 +37,29 @@ public sealed class FeatureOptOutStore
     {
         EnsureLoaded();
         return _ids.ContainsKey(itemId);
+    }
+
+    /// <summary>
+    /// Check if this item is opted-out either directly OR via an ancestor.
+    /// For Episodes we walk: Episode -> Season -> Series, so a single
+    /// entry for a Series GUID suppresses prerolls on every episode and
+    /// season under it. Backward compatible with old per-item entries.
+    /// </summary>
+    public bool IsOptedOut(BaseItem? item)
+    {
+        if (item is null) return false;
+        EnsureLoaded();
+        if (_ids.ContainsKey(item.Id)) return true;
+        if (item is Episode ep)
+        {
+            if (ep.SeasonId != Guid.Empty && _ids.ContainsKey(ep.SeasonId)) return true;
+            if (ep.SeriesId != Guid.Empty && _ids.ContainsKey(ep.SeriesId)) return true;
+        }
+        else if (item is Season season)
+        {
+            if (season.SeriesId != Guid.Empty && _ids.ContainsKey(season.SeriesId)) return true;
+        }
+        return false;
     }
 
     public void Add(Guid itemId)

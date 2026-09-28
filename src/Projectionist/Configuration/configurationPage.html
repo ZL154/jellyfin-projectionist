@@ -405,6 +405,12 @@
                     text-transform: uppercase; letter-spacing: .04em;
                 }
                 .pjt-mini-btn:hover { color: var(--pjt-text); border-color: var(--pjt-accent); }
+                .pjt-lib-type-active {
+                    background: var(--pjt-accent-dim) !important;
+                    color: var(--pjt-text) !important;
+                    border-color: var(--pjt-accent) !important;
+                }
+                .pjt-lib-row:hover { background: var(--pjt-surface-alt); }
 
                 .pjt-folder-row, .pjt-rule-row {
                     display: flex; gap: 8px; align-items: center;
@@ -538,7 +544,7 @@
 
                 <div class="pjt-header">
                     <h1>Projectionist</h1>
-                    <span class="pjt-version">v1.2.0</span>
+                    <span class="pjt-version" id="pjt-version"></span>
                 </div>
                 <div class="pjt-tagline">
                     Plays preroll videos before movies and episodes. Folder-based — no Jellyfin library required.
@@ -862,11 +868,11 @@
                     </div>
                 </div>
 
-                <div class="pjt-divider-label">v1.2.0</div>
+                <div class="pjt-divider-label">Extras</div>
 
                 <div class="pjt-card pjt-v12-card">
-                    <h2>v1.2.0 features</h2>
-                    <div class="pjt-section-hint">New in v1.2.0 — per-item opt-out, cinema overlay, coming-soon trailers, post-roll outros, and audio loudness analysis. Existing behaviour is unchanged unless you enable these.</div>
+                    <h2>Extras</h2>
+                    <div class="pjt-section-hint">Per-item and per-series opt-out, coming-soon trailers, post-roll outros, and audio loudness analysis. Existing behaviour is unchanged unless you enable these.</div>
 
                     <!-- 1. Per-feature opt-out -->
                     <div class="pjt-subcard">
@@ -877,11 +883,47 @@
                             <div class="pjt-empty" style="padding:18px;">No opted-out items.</div>
                         </div>
 
-                        <div style="display:flex; gap:8px;">
-                            <input class="pjt-input" id="pjt-optout-input" placeholder="e.g. 1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p" style="flex:1; font-family:var(--pjt-mono); font-size:11px;" />
+                        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                            <button type="button" class="pjt-btn" id="pjt-optout-browse" style="white-space:nowrap;">Browse Library…</button>
+                            <input class="pjt-input" id="pjt-optout-input" placeholder="…or paste Guid: 1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p" style="flex:1; min-width:240px; font-family:var(--pjt-mono); font-size:11px;" />
                             <button type="button" class="pjt-btn" id="pjt-optout-add" style="white-space:nowrap;">+ Add Guid</button>
                         </div>
-                        <div class="pjt-hint">Paste a Jellyfin item Guid (32 hex chars, with or without dashes).</div>
+                        <div class="pjt-hint">Browse your library and tick anything to opt out — or paste a Guid manually. Opting out a Series covers every episode under it.</div>
+                    </div>
+
+                    <!-- Library browser modal (hidden until "Browse Library" clicked) -->
+                    <div id="pjt-lib-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.72); z-index:9999; align-items:center; justify-content:center; padding:24px;">
+                        <div style="background:var(--pjt-surface); border:1px solid var(--pjt-border); border-radius:8px; width:min(840px, 100%); max-height:88vh; display:flex; flex-direction:column;">
+                            <div style="display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--pjt-border);">
+                                <div>
+                                    <div style="font-weight:600; font-size:14px;">Opt out from library</div>
+                                    <div class="pjt-hint" style="margin:4px 0 0 0;">Pick movies, series, or specific episodes. Series-level entries cover every episode underneath.</div>
+                                </div>
+                                <button type="button" class="pjt-mini-btn" id="pjt-lib-close">Close</button>
+                            </div>
+
+                            <div style="padding:14px 20px 8px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; border-bottom:1px solid var(--pjt-border);">
+                                <input type="text" class="pjt-input" id="pjt-lib-search" placeholder="Search library…" style="flex:1; min-width:220px;" />
+                                <div style="display:flex; gap:4px;" id="pjt-lib-typebar">
+                                    <button type="button" class="pjt-mini-btn pjt-lib-type pjt-lib-type-active" data-type="all">All</button>
+                                    <button type="button" class="pjt-mini-btn pjt-lib-type" data-type="Movie">Movies</button>
+                                    <button type="button" class="pjt-mini-btn pjt-lib-type" data-type="Series">Series</button>
+                                    <button type="button" class="pjt-mini-btn pjt-lib-type" data-type="Episode">Episodes</button>
+                                </div>
+                            </div>
+
+                            <div id="pjt-lib-results" style="flex:1; overflow-y:auto; padding:8px 12px;">
+                                <div class="pjt-empty" style="padding:32px;">Type to search your library.</div>
+                            </div>
+
+                            <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 20px; border-top:1px solid var(--pjt-border); gap:12px;">
+                                <div class="pjt-hint" id="pjt-lib-count">0 selected</div>
+                                <div style="display:flex; gap:8px;">
+                                    <button type="button" class="pjt-mini-btn" id="pjt-lib-clear">Clear</button>
+                                    <button type="button" class="pjt-btn" id="pjt-lib-apply">Add selected to opt-outs</button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- 3. Coming-soon trailers -->
@@ -1284,7 +1326,9 @@
             var headers = {};
             try {
                 if (typeof ApiClient.accessToken === 'function') {
+                    // Jellyfin 12 only accepts the Authorization header.
                     headers['X-Emby-Token'] = ApiClient.accessToken();
+                    headers['Authorization'] = 'MediaBrowser Token="' + ApiClient.accessToken() + '"';
                 }
             } catch (_) {}
 
@@ -1609,11 +1653,36 @@
                 list.innerHTML = '<div class="pjt-empty" style="padding:18px;">No opted-out items.</div>';
                 return;
             }
+            var names = state.optOutNames || {};
             var html = '';
             for (var i = 0; i < state.optOuts.length; i++) {
                 var g = state.optOuts[i];
-                html += '<div class="pjt-optout-row">'
-                     +    '<div class="pjt-guid" title="' + escapeHtml(g) + '">' + escapeHtml(g) + '</div>'
+                var meta = names[g] || names[g.replace(/-/g, '')];
+                var title;
+                var sub;
+                if (meta) {
+                    title = escapeHtml(meta.Name || '(untitled)');
+                    if (meta.Type === 'Episode') {
+                        sub = (meta.SeriesName ? escapeHtml(meta.SeriesName) + ' · ' : '')
+                            + 'Episode'
+                            + (meta.ParentIndexNumber != null ? ' · S' + meta.ParentIndexNumber : '')
+                            + (meta.IndexNumber != null ? 'E' + meta.IndexNumber : '');
+                    } else if (meta.Type === 'Series') {
+                        sub = 'Series · covers every episode';
+                    } else if (meta.Type === 'Movie') {
+                        sub = 'Movie' + (meta.ProductionYear ? ' · ' + meta.ProductionYear : '');
+                    } else {
+                        sub = escapeHtml(meta.Type || '');
+                    }
+                } else {
+                    title = '<span style="color:var(--pjt-text-dim);">' + escapeHtml(g) + '</span>';
+                    sub = 'Unknown item';
+                }
+                html += '<div class="pjt-optout-row" title="' + escapeHtml(g) + '">'
+                     +    '<div style="flex:1; min-width:0;">'
+                     +      '<div style="font-weight:500;">' + title + '</div>'
+                     +      '<div class="pjt-hint" style="margin:2px 0 0 0;">' + sub + '</div>'
+                     +    '</div>'
                      +    '<button type="button" class="pjt-mini-btn" data-rm-guid="' + escapeHtml(g) + '">Remove</button>'
                      +  '</div>';
             }
@@ -1623,6 +1692,42 @@
                     removeOptOut(btn.getAttribute('data-rm-guid'));
                 });
             });
+        }
+
+        function fetchOptOutNames(guids) {
+            state.optOutNames = state.optOutNames || {};
+            var missing = (guids || []).filter(function(g) {
+                return g && !state.optOutNames[g] && !state.optOutNames[g.replace(/-/g, '')];
+            });
+            if (!missing.length) return Promise.resolve();
+            var apiClient = window.ApiClient;
+            if (!apiClient || typeof apiClient.getItems !== 'function') return Promise.resolve();
+            try {
+                return apiClient.getItems(apiClient.getCurrentUserId(), {
+                    Ids: missing.join(','),
+                    Fields: 'ParentIndexNumber,IndexNumber,SeriesName,ProductionYear'
+                }).then(function(res) {
+                    var items = (res && res.Items) || [];
+                    for (var i = 0; i < items.length; i++) {
+                        var it = items[i];
+                        if (!it || !it.Id) continue;
+                        var meta = {
+                            Name: it.Name,
+                            Type: it.Type,
+                            SeriesName: it.SeriesName,
+                            ParentIndexNumber: it.ParentIndexNumber,
+                            IndexNumber: it.IndexNumber,
+                            ProductionYear: it.ProductionYear
+                        };
+                        state.optOutNames[it.Id] = meta;
+                        state.optOutNames[it.Id.replace(/-/g, '')] = meta;
+                    }
+                }).catch(function(err) {
+                    console.warn('[Projectionist] opt-out name lookup failed', err);
+                });
+            } catch (e) {
+                return Promise.resolve();
+            }
         }
 
         function refreshOptOuts() {
@@ -1637,7 +1742,8 @@
                     if (typeof x === 'string') return x;
                     return pick(x, 'Guid', null) || pick(x, 'Id', null) || pick(x, 'ItemId', null) || String(x);
                 }).filter(Boolean);
-                renderOptOuts();
+                // Look up item names, then render with both name + guid.
+                fetchOptOutNames(state.optOuts).then(renderOptOuts);
             }).catch(function(err) {
                 console.warn('[Projectionist] opt-outs load failed', err);
                 state.optOuts = [];
@@ -1679,6 +1785,225 @@
                     console.error('[Projectionist] opt-out remove failed', err);
                     toast('Remove failed', true);
                 });
+        }
+
+        // ============= Library browser modal =============
+        // Multi-select picker that queries Jellyfin's /Items endpoint and
+        // adds selected GUIDs to the opt-out list. Supports Movie / Series
+        // / Episode types. Series entries cascade to all episodes via the
+        // server-side ancestor-aware IsOptedOut check.
+        var libState = { selected: {}, lastQuery: '', type: 'all', searchTimer: null };
+
+        function libOpen() {
+            var modal = $('pjt-lib-modal');
+            if (!modal) return;
+            modal.style.display = 'flex';
+            libState.selected = {};
+            libState.lastQuery = '';
+            libState.type = 'all';
+            $('pjt-lib-search').value = '';
+            libUpdateCount();
+            libRenderResults([]);
+            // Show some initial content — recently added movies + series
+            libLoad('', 'all');
+            setTimeout(function() { try { $('pjt-lib-search').focus(); } catch(_){} }, 50);
+        }
+
+        function libClose() {
+            var modal = $('pjt-lib-modal');
+            if (modal) modal.style.display = 'none';
+        }
+
+        function libUpdateCount() {
+            var n = Object.keys(libState.selected).length;
+            var el = $('pjt-lib-count');
+            if (el) el.textContent = n + ' selected';
+        }
+
+        function libToggle(item) {
+            if (!item || !item.Id) return;
+            if (libState.selected[item.Id]) {
+                delete libState.selected[item.Id];
+            } else {
+                libState.selected[item.Id] = { Id: item.Id, Name: item.Name, Type: item.Type };
+            }
+            libUpdateCount();
+            // Re-render row check states without losing scroll
+            libRenderResults(libState.lastResults || []);
+        }
+
+        function libClear() {
+            libState.selected = {};
+            libUpdateCount();
+            libRenderResults(libState.lastResults || []);
+        }
+
+        function libApply() {
+            var ids = Object.keys(libState.selected);
+            if (!ids.length) { toast('Nothing selected', true); return; }
+            var picks = ids.map(function(id) { return libState.selected[id]; });
+            var btn = $('pjt-lib-apply');
+            if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
+            // Issue POSTs serially to keep things simple (small N expected).
+            var i = 0;
+            function next() {
+                if (i >= picks.length) {
+                    if (btn) { btn.disabled = false; btn.textContent = 'Add selected to opt-outs'; }
+                    toast('Added ' + picks.length + ' opt-out' + (picks.length === 1 ? '' : 's'));
+                    libClose();
+                    refreshOptOuts();
+                    return;
+                }
+                var p = picks[i++];
+                api('OptOut/' + encodeURIComponent(p.Id), { method: 'POST', expectJson: false })
+                    .then(next)
+                    .catch(function(err) {
+                        console.error('[Projectionist] bulk opt-out add failed', p, err);
+                        next(); // keep going on individual failures
+                    });
+            }
+            next();
+        }
+
+        function libLoad(query, typeFilter) {
+            var resultsEl = $('pjt-lib-results');
+            if (!resultsEl) return;
+            resultsEl.innerHTML = '<div class="pjt-empty" style="padding:32px;">Loading…</div>';
+            var apiClient = window.ApiClient;
+            if (!apiClient || typeof apiClient.getItems !== 'function') {
+                resultsEl.innerHTML = '<div class="pjt-empty" style="padding:32px;">Jellyfin ApiClient unavailable.</div>';
+                return;
+            }
+            var includeItemTypes;
+            if (typeFilter === 'all') includeItemTypes = 'Movie,Series,Episode';
+            else includeItemTypes = typeFilter;
+            var opts = {
+                Recursive: true,
+                IncludeItemTypes: includeItemTypes,
+                Limit: 80,
+                Fields: 'PrimaryImageAspectRatio',
+                EnableTotalRecordCount: false
+            };
+            if (query) {
+                opts.SearchTerm = query;
+            } else {
+                opts.SortBy = 'SortName';
+                opts.SortOrder = 'Ascending';
+            }
+            try {
+                apiClient.getItems(apiClient.getCurrentUserId(), opts)
+                    .then(function(res) {
+                        var items = (res && res.Items) || [];
+                        libState.lastResults = items;
+                        libState.lastQuery = query;
+                        libState.type = typeFilter;
+                        libRenderResults(items);
+                    })
+                    .catch(function(err) {
+                        console.warn('[Projectionist] library search failed', err);
+                        resultsEl.innerHTML = '<div class="pjt-empty" style="padding:32px;">Search failed.</div>';
+                    });
+            } catch (e) {
+                resultsEl.innerHTML = '<div class="pjt-empty" style="padding:32px;">Search error.</div>';
+            }
+        }
+
+        function libRenderResults(items) {
+            var resultsEl = $('pjt-lib-results');
+            if (!resultsEl) return;
+            if (!items.length) {
+                resultsEl.innerHTML = '<div class="pjt-empty" style="padding:32px;">No matches.</div>';
+                return;
+            }
+            var html = '';
+            for (var i = 0; i < items.length; i++) {
+                var it = items[i];
+                var checked = libState.selected[it.Id] ? 'checked' : '';
+                var label = escapeHtml(it.Name || '(untitled)');
+                var sub = '';
+                if (it.Type === 'Episode') {
+                    sub = (it.SeriesName ? escapeHtml(it.SeriesName) : '') +
+                          (it.ParentIndexNumber != null ? ' · S' + it.ParentIndexNumber : '') +
+                          (it.IndexNumber != null ? 'E' + it.IndexNumber : '');
+                } else if (it.Type === 'Series') {
+                    sub = 'Series · all episodes will be opted out';
+                } else if (it.Type === 'Movie') {
+                    sub = 'Movie' + (it.ProductionYear ? ' · ' + it.ProductionYear : '');
+                } else {
+                    sub = escapeHtml(it.Type || '');
+                }
+                html += '<label class="pjt-lib-row" style="display:flex; align-items:center; gap:10px; padding:8px 10px; border-bottom:1px solid var(--pjt-border); cursor:pointer;" data-id="' + escapeHtml(it.Id) + '">'
+                     +   '<input type="checkbox" data-lib-id="' + escapeHtml(it.Id) + '" ' + checked + ' />'
+                     +   '<div style="flex:1; min-width:0;">'
+                     +     '<div style="font-weight:500;">' + label + '</div>'
+                     +     '<div class="pjt-hint" style="margin:2px 0 0 0;">' + sub + '</div>'
+                     +   '</div>'
+                     +   '<div class="pjt-hint" style="font-family:var(--pjt-mono); font-size:10px;">' + escapeHtml(it.Type || '') + '</div>'
+                     + '</label>';
+            }
+            resultsEl.innerHTML = html;
+            // Wire checkbox handlers — find the original item by id from lastResults
+            resultsEl.querySelectorAll('input[data-lib-id]').forEach(function(cb) {
+                cb.addEventListener('change', function() {
+                    var id = cb.getAttribute('data-lib-id');
+                    var match = (libState.lastResults || []).find(function(x) { return x.Id === id; });
+                    if (match) libToggle(match);
+                });
+            });
+        }
+
+        function libWireOnce() {
+            var browseBtn = $('pjt-optout-browse');
+            if (browseBtn && !browseBtn.__pjtWired) {
+                browseBtn.__pjtWired = true;
+                browseBtn.addEventListener('click', libOpen);
+            }
+            var closeBtn = $('pjt-lib-close');
+            if (closeBtn && !closeBtn.__pjtWired) {
+                closeBtn.__pjtWired = true;
+                closeBtn.addEventListener('click', libClose);
+            }
+            var clearBtn = $('pjt-lib-clear');
+            if (clearBtn && !clearBtn.__pjtWired) {
+                clearBtn.__pjtWired = true;
+                clearBtn.addEventListener('click', libClear);
+            }
+            var applyBtn = $('pjt-lib-apply');
+            if (applyBtn && !applyBtn.__pjtWired) {
+                applyBtn.__pjtWired = true;
+                applyBtn.addEventListener('click', libApply);
+            }
+            var searchEl = $('pjt-lib-search');
+            if (searchEl && !searchEl.__pjtWired) {
+                searchEl.__pjtWired = true;
+                searchEl.addEventListener('input', function() {
+                    if (libState.searchTimer) clearTimeout(libState.searchTimer);
+                    libState.searchTimer = setTimeout(function() {
+                        libLoad(searchEl.value || '', libState.type);
+                    }, 220);
+                });
+            }
+            var typebar = $('pjt-lib-typebar');
+            if (typebar && !typebar.__pjtWired) {
+                typebar.__pjtWired = true;
+                typebar.querySelectorAll('.pjt-lib-type').forEach(function(btn) {
+                    btn.addEventListener('click', function() {
+                        typebar.querySelectorAll('.pjt-lib-type').forEach(function(b) {
+                            b.classList.remove('pjt-lib-type-active');
+                        });
+                        btn.classList.add('pjt-lib-type-active');
+                        libLoad(($('pjt-lib-search').value) || '', btn.getAttribute('data-type'));
+                    });
+                });
+            }
+            // Click outside modal to close
+            var modal = $('pjt-lib-modal');
+            if (modal && !modal.__pjtWired) {
+                modal.__pjtWired = true;
+                modal.addEventListener('click', function(e) {
+                    if (e.target === modal) libClose();
+                });
+            }
         }
 
         function listPostRolls() {
@@ -1768,6 +2093,20 @@
             });
         }
 
+        // Read the installed version instead of hardcoding it: the dashboard
+        // otherwise advertises whatever version the page was last edited in.
+        // /Plugins returns hyphen-less GUIDs.
+        function showInstalledVersion() {
+            var el = $('pjt-version');
+            if (!el || !window.ApiClient) return;
+            ApiClient.getJSON(ApiClient.getUrl('Plugins')).then(function(list) {
+                var me = (list || []).filter(function(p) {
+                    return String(p.Id || '').replace(/-/g, '').toLowerCase() === 'a51f9a527c3b4b899f104c8e2b3d1a5e';
+                })[0];
+                if (me && me.Version) el.textContent = 'v' + me.Version;
+            }).catch(function() {});
+        }
+
         var pageEl = document.querySelector('#ProjectionistConfigPage');
         if (pageEl) pageEl.addEventListener('pageshow', function() {
             fetchUsers(); loadConfig(); refreshLibraryStatus(); refreshStats(); runValidation();
@@ -1802,6 +2141,7 @@
         if (optInput) optInput.addEventListener('keydown', function(e) {
             if (e.key === 'Enter') { e.preventDefault(); addOptOut(); }
         });
+        libWireOnce();
         var prBtn = $('pjt-postroll-list-btn');
         if (prBtn) prBtn.addEventListener('click', listPostRolls);
         var loudBtn = $('pjt-loudness-analyze');
@@ -1809,6 +2149,7 @@
 
         // attempt initial load even without pageshow
         loadConfig();
+        showInstalledVersion();
     })();
     </script>
 </div>

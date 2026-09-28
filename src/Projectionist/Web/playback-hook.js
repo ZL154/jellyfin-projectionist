@@ -149,9 +149,12 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
         attempts = attempts || 0;
         try {
             var ac = (window.ApiClient || (window.connectionManager && connectionManager.currentApiClient && connectionManager.currentApiClient()));
-            if (!ac) {
-                // Retry while ApiClient initialises. Up to ~30 seconds.
-                if (attempts < 150) setTimeout(function () { loadConfig(attempts + 1); }, 200);
+            if (!ac || !hasAccessToken(ac)) {
+                // Wait for ApiClient AND a signed-in user. A fresh load lands
+                // on the login page first, where this request can only 401,
+                // and the settings were then never fetched for the session.
+                // The check is local (no request), so polling is cheap.
+                setTimeout(function () { loadConfig(attempts); }, 1000);
                 return;
             }
             ac.fetch({ url: ac.getUrl('Plugins/Projectionist/HookSettings'), type: 'GET', dataType: 'json' })
@@ -166,8 +169,18 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
                     window.__projectionistSettings.featurePreloadEnabled = preloadMode !== 0;
                     dlog('config:loaded', { minSkipSeconds: minSkipSeconds, enabled: enabled, preloadMode: preloadMode });
                 })
-                .catch(function (err) { dlog('config:fetch-failed', { msg: String(err) }); });
+                .catch(function (err) {
+                    dlog('config:fetch-failed', { msg: String(err) });
+                    if (attempts < 5) setTimeout(function () { loadConfig(attempts + 1); }, 3000);
+                });
         } catch (e) { dlog('config:throw', { msg: String(e) }); }
+    }
+
+    function hasAccessToken(ac) {
+        try {
+            var t = typeof ac.accessToken === 'function' ? ac.accessToken() : ac.accessToken;
+            return !!t;
+        } catch (_) { return false; }
     }
     loadConfig();
 
@@ -269,11 +282,14 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
                         var seconds = video ? Math.round(video.currentTime * 10) / 10 : 0;
                         var ac = getApiClientLocal();
                         if (ac && currentPrerollFileName) {
-                            fetch('/Plugins/Projectionist/SkipReport', {
+                            // Jellyfin 12 rejects X-Emby-Token by default;
+                            // only the Authorization header is accepted there.
+                            fetch(ac.getUrl('Plugins/Projectionist/SkipReport'), {
                                 method: 'POST',
                                 headers: {
                                     'Content-Type': 'application/json',
                                     'X-Emby-Token': ac.accessToken(),
+                                    'Authorization': 'MediaBrowser Token="' + ac.accessToken() + '"',
                                 },
                                 body: JSON.stringify({ fileName: currentPrerollFileName, secondsBeforeSkip: seconds }),
                             }).catch(function () {});
@@ -394,21 +410,109 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
         try { console.log.apply(console, [TAG].concat(Array.prototype.slice.call(arguments))); } catch (_) {}
     }
 
-    function waitForPlaybackManager(cb, attempts) {
-        attempts = attempts || 0;
-        // playbackManager is exposed differently in different client versions.
-        var pm = window.playbackManager
-            || (window.require && tryRequire('playbackManager'))
-            || (window.RequireJS && tryRequire('playbackManager'));
-        if (pm && typeof pm.play === 'function') {
-            cb(pm);
-            return;
+    // playbackManager is NOT on `window` in modern Jellyfin Web (10.9+);
+    // it's a named ES-module export. We capture it via two parallel paths,
+    // whichever wins first:
+    //
+    //   1) Webpack chunk dig — push a synthetic chunk to harvest
+    //      `__webpack_require__`, then walk `req.c` (module cache) for any
+    //      exports object that duck-types as playbackManager.
+    //
+    //   2) `window.Events.on` monkey-patch — Jellyfin Web exposes
+    //      `window.Events` (the pub/sub singleton). Every page that displays
+    //      playback state (now-playing bar, OSD, item details) subscribes
+    //      `Events.on(playbackManager, 'playbackstop', ...)` etc; the first
+    //      such call hands us the playbackManager instance for free.
+    //
+    // We also fall back to the legacy `window.playbackManager` global if
+    // some other plugin happens to expose it.
+    function pbmLooksRight(obj) {
+        return obj && typeof obj === 'object'
+            && typeof obj.play === 'function'
+            && typeof obj.canPlay === 'function'
+            && typeof obj.getCurrentPlayer === 'function';
+    }
+
+    function tryWebpackDig() {
+        try {
+            var chunkGlobals = [];
+            if (Array.isArray(window.webpackChunk)) chunkGlobals.push(window.webpackChunk);
+            var names = Object.getOwnPropertyNames(window);
+            for (var ni = 0; ni < names.length; ni++) {
+                if (!/^webpackChunk/i.test(names[ni])) continue;
+                var v = window[names[ni]];
+                if (Array.isArray(v) && chunkGlobals.indexOf(v) === -1) chunkGlobals.push(v);
+            }
+            for (var ci = 0; ci < chunkGlobals.length; ci++) {
+                var chunkGlobal = chunkGlobals[ci];
+                var req = null;
+                var chunkId = 'pjt-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+                try { chunkGlobal.push([[chunkId], {}, function (r) { req = r; }]); } catch (_) { continue; }
+                if (typeof req !== 'function' || !req.c) continue;
+                for (var modId in req.c) {
+                    var mod = req.c[modId];
+                    var exp = mod && mod.exports;
+                    if (!exp || typeof exp !== 'object') continue;
+                    // Common minified-export shapes: exp.f, exp.default,
+                    // exp.playbackManager, or the exports object itself.
+                    var candidates = [exp.f, exp.default, exp.playbackManager, exp];
+                    for (var ki = 0; ki < candidates.length; ki++) {
+                        if (pbmLooksRight(candidates[ki])) return candidates[ki];
+                    }
+                }
+            }
+        } catch (_) { }
+        return null;
+    }
+
+    function tryLegacyGlobal() {
+        return pbmLooksRight(window.playbackManager) ? window.playbackManager : null;
+    }
+
+    var __pjtEventsHookInstalled = false;
+    function installEventsHook(onCapture) {
+        if (__pjtEventsHookInstalled) return true;
+        if (!window.Events || typeof window.Events.on !== 'function') return false;
+        var origOn = window.Events.on;
+        var origTrigger = window.Events.trigger;
+        window.Events.on = function (obj, type, fn) {
+            try { if (pbmLooksRight(obj)) onCapture(obj); } catch (_) { }
+            return origOn.apply(this, arguments);
+        };
+        if (typeof origTrigger === 'function') {
+            window.Events.trigger = function (obj, type, args) {
+                try { if (pbmLooksRight(obj)) onCapture(obj); } catch (_) { }
+                return origTrigger.apply(this, arguments);
+            };
         }
-        if (attempts > 80) { // ~16s of polling
-            log('gave up waiting for playbackManager');
-            return;
+        __pjtEventsHookInstalled = true;
+        return true;
+    }
+
+    function waitForPlaybackManager(cb) {
+        var captured = false;
+        function onCapture(pbm) {
+            if (captured) return;
+            captured = true;
+            try { cb(pbm); } catch (e) { log('patch threw', e); }
         }
-        setTimeout(function () { waitForPlaybackManager(cb, attempts + 1); }, 200);
+        // Eager: try right now.
+        var pbm = tryWebpackDig() || tryLegacyGlobal();
+        if (pbm) { onCapture(pbm); return; }
+        installEventsHook(onCapture);
+        // Polling backup — modules + Events may not be ready immediately.
+        var attempts = 0;
+        var iv = setInterval(function () {
+            attempts++;
+            if (captured || attempts > 120) { // 120 * 250ms = 30s
+                clearInterval(iv);
+                if (!captured) log('gave up waiting for playbackManager (modern web)');
+                return;
+            }
+            if (!__pjtEventsHookInstalled) installEventsHook(onCapture);
+            var p = tryWebpackDig() || tryLegacyGlobal();
+            if (p) { clearInterval(iv); onCapture(p); }
+        }, 250);
     }
 
     function tryRequire(name) {
@@ -419,11 +523,25 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
      * Fetch the intros for the given itemId via /Items/{id}/Intros.
      * Returns a promise resolving to an array of BaseItemDto, or [] on any failure.
      */
+    // Short-lived intros cache keyed by itemId. Lets us pre-warm the
+    // /Intros response during the back half of the current episode so the
+    // auto-next-episode transition fires play() with everything in hand —
+    // no network round-trip standing between "episode ends" and
+    // "next-episode play() committed" — which is what was letting
+    // jellyfin-web slip in a navigate-to-home between the two.
+    var __pjtIntrosCache = {};
+    var INTROS_CACHE_TTL_MS = 60 * 1000;
+
     function fetchIntros(apiClient, itemId, userId) {
+        if (!itemId) return Promise.resolve([]);
+        var cached = __pjtIntrosCache[itemId];
+        if (cached && (Date.now() - cached.t) < INTROS_CACHE_TTL_MS) {
+            return Promise.resolve(cached.items);
+        }
         try {
-            // ApiClient.getIntros handles the right URL + auth.
             return apiClient.getIntros(itemId).then(function (res) {
                 var items = (res && res.Items) || [];
+                __pjtIntrosCache[itemId] = { items: items, t: Date.now() };
                 return items;
             }).catch(function () { return []; });
         } catch (e) {
@@ -437,7 +555,15 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
 
     function getFirstPlayItem(options) {
         if (!options) return null;
-        if (Array.isArray(options.items) && options.items.length) return options.items[0];
+        if (Array.isArray(options.items) && options.items.length) {
+            // Respect startIndex — when a series view plays from an
+            // episode list, items[] holds the whole season and startIndex
+            // points to the chosen episode. Using items[0] gives the
+            // wrong item (always the season opener).
+            var idx = (typeof options.startIndex === 'number' && options.startIndex >= 0)
+                ? options.startIndex : 0;
+            return options.items[idx] || options.items[0];
+        }
         if (options.item) return options.item;
         if (options.Item) return options.Item;
         if (options.currentItem) return options.currentItem;
@@ -446,9 +572,11 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
 
     function getFirstPlayId(options) {
         if (!options) return null;
-        if (Array.isArray(options.ids) && options.ids.length) return options.ids[0];
-        if (Array.isArray(options.itemIds) && options.itemIds.length) return options.itemIds[0];
-        if (Array.isArray(options.ItemIds) && options.ItemIds.length) return options.ItemIds[0];
+        var idx = (typeof options.startIndex === 'number' && options.startIndex >= 0)
+            ? options.startIndex : 0;
+        if (Array.isArray(options.ids) && options.ids.length) return options.ids[idx] || options.ids[0];
+        if (Array.isArray(options.itemIds) && options.itemIds.length) return options.itemIds[idx] || options.itemIds[0];
+        if (Array.isArray(options.ItemIds) && options.ItemIds.length) return options.ItemIds[idx] || options.ItemIds[0];
         return options.id || options.Id || options.itemId || options.ItemId || null;
     }
 
@@ -647,7 +775,38 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
 
         playbackManager.play = function (options) {
             var apiClient = getApiClient();
-            if (!apiClient || !options) return origPlay(options);
+
+            // Mark that we're mid-play so the auto-next handler skips. We
+            // clear this when the inner origPlay() returns (success or
+            // failure). 5-second safety-net timer in case the promise
+            // never resolves.
+            window.__projectionistPlayInFlight = true;
+            var clearInFlight = (function () {
+                var cleared = false;
+                return function () {
+                    if (cleared) return;
+                    cleared = true;
+                    window.__projectionistPlayInFlight = false;
+                };
+            })();
+            setTimeout(clearInFlight, 5000);
+            // Helper: invoke origPlay and clear the flag once it settles.
+            function origPlayAndSettle(opts) {
+                try {
+                    var p = origPlay(opts);
+                    if (p && typeof p.then === 'function') {
+                        return p.then(function (v) { clearInFlight(); return v; },
+                                      function (e) { clearInFlight(); throw e; });
+                    }
+                    clearInFlight();
+                    return p;
+                } catch (err) {
+                    clearInFlight();
+                    throw err;
+                }
+            }
+
+            if (!apiClient || !options) return origPlayAndSettle(options);
 
             // Episodes need us to prepend intros; movies fetch intros natively,
             // but we still prefetch their intro list so the skip button can
@@ -667,7 +826,7 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
                 itemPromise = apiClient.getItem(apiClient.getCurrentUserId(), firstId)
                     .catch(function () { return null; });
             } else {
-                return origPlay(options);
+                return origPlayAndSettle(options);
             }
 
             return itemPromise.then(function (item) {
@@ -680,47 +839,83 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
                     }
                 } catch (_) {}
                 if (!isEpisode(item)) {
-                    if (!isVideoFeature(item)) return origPlay(options);
+                    if (!isVideoFeature(item)) return origPlayAndSettle(options);
                     return fetchIntros(apiClient, item.Id || firstId).then(function (intros) {
                         markIntrosForSkip(intros);
                         preloadFeature(apiClient, item, options);
-                        return origPlay(options);
+                        return origPlayAndSettle(options);
                     });
                 }
 
                 return fetchIntros(apiClient, item.Id || firstId).then(function (intros) {
                     if (!intros.length) {
                         log('no preroll for episode', item.Name || item.Id);
-                        return origPlay(options);
+                        return origPlayAndSettle(options);
                     }
                     log('queueing', intros.length, 'preroll(s) before episode', item.Name || item.Id);
                     preloadFeature(apiClient, item, options);
                     markIntrosForSkip(intros);
 
                     // Prepend intros to whichever input the caller used.
+                    // Honor startIndex: keep target item + everything after,
+                    // drop items before it (the user is starting at the
+                    // selected episode, not the season opener), prepend the
+                    // intros, and reset startIndex to 0 so playback begins
+                    // with the first intro.
+                    var sIdx = (typeof options.startIndex === 'number' && options.startIndex >= 0)
+                        ? options.startIndex : 0;
                     var newOptions = Object.assign({}, options);
+                    newOptions.startIndex = 0;
+                    // Drop options that were derived for the original target
+                    // item and would contaminate intro playback (mediaSource
+                    // id, audio/subtitle track indices, etc.).
+                    delete newOptions.mediaSourceId;
+                    delete newOptions.audioStreamIndex;
+                    delete newOptions.subtitleStreamIndex;
+                    // KEEP the full queue (don't trim later episodes). Per
+                    // Playwright diagnostics, trimming left an empty queue
+                    // after the target episode, which triggered jellyfin-
+                    // web's "no more items → navigate to home" flow — that
+                    // was the home-screen flash. With the full queue
+                    // preserved, internal nextTrack() advances cleanly to
+                    // the next episode. We then inject intros for upcoming
+                    // queue items via queueNext during timeupdate (see
+                    // maybePrefetchNextUp) so each episode still gets its
+                    // own preroll.
                     if (Array.isArray(options.items)) {
-                        newOptions.items = intros.concat(options.items);
-                        delete newOptions.ids;
+                        var introIdsFromItems = intros.map(function (i) { return i.Id; });
+                        var keepIdsFromItems = options.items.slice(sIdx).map(function (it) { return it.Id; });
+                        if (!keepIdsFromItems.length || !keepIdsFromItems[0]) return origPlayAndSettle(options);
+                        newOptions.ids = introIdsFromItems.concat(keepIdsFromItems);
+                        newOptions.serverId = (options.items[sIdx] && options.items[sIdx].ServerId)
+                            || newOptions.serverId
+                            || apiClient.serverId();
+                        delete newOptions.items;
+                        delete newOptions.item;
+                        delete newOptions.Item;
+                        delete newOptions.currentItem;
                         delete newOptions.itemIds;
                         delete newOptions.ItemIds;
                     } else if (Array.isArray(options.ids)) {
                         var introIds = intros.map(function (i) { return i.Id; });
-                        newOptions.ids = introIds.concat(options.ids);
+                        var keepIds = options.ids.slice(sIdx);
+                        newOptions.ids = introIds.concat(keepIds);
                         delete newOptions.items;
                         delete newOptions.item;
                         delete newOptions.Item;
                         delete newOptions.currentItem;
                     } else if (Array.isArray(options.itemIds)) {
                         var introItemIds = intros.map(function (i) { return i.Id; });
-                        newOptions.itemIds = introItemIds.concat(options.itemIds);
+                        var keepItemIds = options.itemIds.slice(sIdx);
+                        newOptions.itemIds = introItemIds.concat(keepItemIds);
                         delete newOptions.items;
                         delete newOptions.item;
                         delete newOptions.Item;
                         delete newOptions.currentItem;
                     } else if (Array.isArray(options.ItemIds)) {
                         var introUpperItemIds = intros.map(function (i) { return i.Id; });
-                        newOptions.ItemIds = introUpperItemIds.concat(options.ItemIds);
+                        var keepUpperItemIds = options.ItemIds.slice(sIdx);
+                        newOptions.ItemIds = introUpperItemIds.concat(keepUpperItemIds);
                         delete newOptions.items;
                         delete newOptions.item;
                         delete newOptions.Item;
@@ -747,12 +942,328 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
                         // will still trigger via Jellyfin's normal resume on the feature.
                         delete newOptions.startPositionTicks;
                     }
-                    return origPlay(newOptions);
+                    return origPlayAndSettle(newOptions);
                 });
+            }).catch(function (err) {
+                // Make sure we never leave the in-flight flag stuck on a
+                // promise rejection in the upstream chain.
+                clearInFlight();
+                throw err;
             });
         };
 
         log('episode preroll hook installed');
+
+        // ---- Auto-next-episode bridge ----
+        // The queue-trim in our play() wrapper means jellyfin-web's
+        // built-in queue auto-advance has nothing left to play after the
+        // current episode ends. To restore the "next episode auto-plays"
+        // behaviour, we listen for the playbackstop event: when an
+        // Episode ends naturally and the user has EnableNextEpisodeAutoPlay
+        // turned on, we fetch the next-up episode and call play() for it
+        // ourselves — which goes back through our wrapper and prepends a
+        // fresh preroll. Each episode gets its own preroll, indefinitely.
+        if (!playbackManager.__projectionistAutoNextHooked) {
+            playbackManager.__projectionistAutoNextHooked = true;
+            var Events = window.Events;
+            if (Events && typeof Events.on === 'function') {
+                Events.on(playbackManager, 'playbackstop', function (e, info) {
+                    try { handleAutoNextOnStop(playbackManager, info); }
+                    catch (err) { console.warn(TAG, 'auto-next handler error', err); }
+                });
+                // Poll every 4 seconds during playback. jellyfin-web emits
+                // 'timeupdate' on the PLAYER, not on playbackManager — and
+                // the active player changes between episodes — so a
+                // setInterval is the simplest reliable pulse for the
+                // near-end queueNext injection. Cheap: each tick just
+                // reads playbackManager.currentItem() / getPlayerState().
+                var prefetchedForItem = null;
+                setInterval(function () {
+                    try {
+                        var curPlayer = null;
+                        try { curPlayer = playbackManager.getCurrentPlayer && playbackManager.getCurrentPlayer(); } catch (_) {}
+                        if (!curPlayer) return; // nothing playing
+                        var state = null;
+                        try { state = playbackManager.getPlayerState && playbackManager.getPlayerState(curPlayer); } catch (_) {}
+                        if (!state) return;
+                        maybePrefetchNextUp(playbackManager, { state: state }, function (forId) {
+                            prefetchedForItem = forId;
+                        }, function () { return prefetchedForItem; });
+                    } catch (err) { /* swallow */ }
+                }, 4000);
+                log('auto-next-episode bridge installed (polling)');
+            }
+        }
+    }
+
+    function maybePrefetchNextUp(playbackManager, info, mark, getMarked) {
+        if (!info) return;
+        var state = info.state || info; // jellyfin sometimes hands state directly
+        var item = state.NowPlayingItem
+            || (state.PlayState && state.PlayState.NowPlayingItem);
+        if (!item) {
+            try { item = playbackManager.currentItem && playbackManager.currentItem(); } catch (_) {}
+        }
+        if (!item || item.Type !== 'Episode' || !item.SeriesId) return;
+        var positionTicks = (state.PlayState && state.PlayState.PositionTicks) || 0;
+        var runTimeTicks = item.RunTimeTicks || 0;
+        if (runTimeTicks <= 0 || positionTicks <= 0) return;
+        // Trigger pre-fetch in last 30 seconds OR last 10% — whichever fires
+        // first — but not before 30 seconds in (to avoid cheap-shot fetches
+        // on quick browse-and-stop).
+        var trigger = Math.max(runTimeTicks - 30 * 10000000, runTimeTicks * 0.90);
+        if (positionTicks < trigger) return;
+        if (getMarked() === item.Id) return; // already pre-fetched for this item
+        mark(item.Id);
+
+        var apiClient = getApiClient();
+        if (!apiClient) return;
+        // Find episodes AFTER the current one in the series. We always
+        // ask for at least 3 (current + next + the one after) because
+        // jellyfin-web's translateItemsForPlayback EXPANDS a single
+        // queueNext({items: [Episode]}) call into the FULL series queue
+        // starting from Pilot — which then gets inserted after the
+        // current ep, making jellyfin advance to Pilot when current
+        // ends. Including 2+ items (or starting with a non-Episode item)
+        // bypasses that expansion code path.
+        Promise.all([
+            apiClient.getCurrentUser().catch(function () { return null; }),
+            apiClient.getEpisodes(item.SeriesId, {
+                UserId: apiClient.getCurrentUserId(),
+                Limit: 200,
+                Fields: 'RunTimeTicks'
+            }).catch(function () { return null; })
+        ]).then(function (results) {
+            var user = results[0];
+            var eps = results[1];
+            if (user && user.Configuration) {
+                __pjtAutoNextEnabled = !!user.Configuration.EnableNextEpisodeAutoPlay;
+            }
+            // If user disabled auto-next, don't queue anything ahead.
+            if (!__pjtAutoNextEnabled) return;
+            if (!eps || !Array.isArray(eps.Items) || !eps.Items.length) return;
+            // Locate current in the series episode list, then pick the
+            // one immediately after. Limit=200 + scan is more reliable
+            // than StartItemId (which jellyfin's apiClient sometimes
+            // sends as a parameter the server ignores).
+            var curIdxInSeries = -1;
+            for (var i = 0; i < eps.Items.length; i++) {
+                if (eps.Items[i].Id === item.Id) { curIdxInSeries = i; break; }
+            }
+            if (curIdxInSeries < 0 || curIdxInSeries >= eps.Items.length - 1) return;
+            var nextEp = eps.Items[curIdxInSeries + 1];
+            var nextNextEp = eps.Items[curIdxInSeries + 2] || null;
+            if (!nextEp || !nextEp.Id || nextEp.Id === item.Id) return;
+
+            __pjtPrewarmed = {
+                forEpisodeId: item.Id,
+                nextEp: nextEp,
+                ts: Date.now()
+            };
+
+            // getPlaylist() returns a Promise in modern jellyfin-web (not
+            // an array), so we await it instead of `Array.isArray`-ing the
+            // wrapping object.
+            return Promise.all([
+                fetchIntros(apiClient, nextEp.Id),
+                Promise.resolve(playbackManager.getPlaylist ? playbackManager.getPlaylist() : [])
+            ]).then(function (resp) {
+                var intros = resp[0] || [];
+                var playlist = resp[1] || [];
+                try { markIntrosForSkip(intros); } catch (_) {}
+
+                var curIdxInQueue = -1;
+                try { curIdxInQueue = playbackManager.getCurrentPlaylistIndex(); } catch (_) {}
+                var queueAlreadyHasNext = Array.isArray(playlist)
+                    && curIdxInQueue >= 0
+                    && !!playlist[curIdxInQueue + 1];
+
+                // ---- queueNext payload composition ----
+                // CRITICAL: jellyfin-web's translateItemsForPlayback expands
+                // a single-Episode queueNext into the FULL series queue
+                // starting from Pilot. To bypass:
+                //   - items.length must be >= 2, AND/OR
+                //   - firstItem must NOT be Type='Episode'
+                // Intros are Movie items (from the hidden preroll library),
+                // so when intros are non-empty they make the firstItem a
+                // Movie and expansion is skipped. When intros are empty
+                // and we need to add the next episode, we also include
+                // nextNextEp so items.length === 2.
+                var toQueue;
+                if (queueAlreadyHasNext) {
+                    // Native auto-advance has next ep covered. Only insert
+                    // intros between current and next (they're Movies, no
+                    // expansion concern). If no intros, do nothing.
+                    if (!intros.length) return;
+                    toQueue = intros;
+                } else {
+                    // Queue would otherwise empty after current — must
+                    // inject the next episode.
+                    if (intros.length) {
+                        // firstItem will be a Movie intro → no expansion.
+                        toQueue = intros.concat([nextEp]);
+                    } else if (nextNextEp) {
+                        // No intros AND no leading non-Episode → pad with
+                        // nextNextEp so items.length === 2 → no expansion.
+                        toQueue = [nextEp, nextNextEp];
+                    } else {
+                        // Last episode of series; we can't pad. Accept
+                        // that no-intros + queue-empty + last-ep =
+                        // playback ends naturally (no auto-next exists).
+                        return;
+                    }
+                }
+                try {
+                    playbackManager.queueNext({ items: toQueue });
+                    log('queued ahead: ' + intros.length + ' preroll(s) '
+                        + '(queueHasNext=' + queueAlreadyHasNext + ', payload=' + toQueue.length + ')');
+                } catch (err) {
+                    console.warn(TAG, 'queueNext failed', err);
+                }
+            });
+        });
+    }
+
+    // Shared state for auto-next safety gates.
+    var __pjtAutoNext = { lastFiredAtMs: 0, lastFiredFor: null };
+
+    // Pre-warmed bundle used to make handleAutoNextOnStop FULLY SYNCHRONOUS
+    // when conditions allow. Populated by maybePrefetchNextUp during the
+    // back half of an episode; consumed when that episode hits its natural
+    // end. Synchronous == we can call playbackManager.play() before jellyfin
+    // -web's queue-empty handling gets a chance to navigate the user back
+    // to the home screen.
+    var __pjtPrewarmed = null;
+    // Long-lived snapshot of EnableNextEpisodeAutoPlay so the stop handler
+    // doesn't need to await getCurrentUser(). Refreshed by prefetch.
+    var __pjtAutoNextEnabled = null;
+
+    function handleAutoNextOnStop(playbackManager, info) {
+        if (!info) return;
+        // If jellyfin-web already has a next item queued, let its native
+        // auto-advance handle it. We only fill in when the queue is empty.
+        if (info.nextItem) return;
+
+        // Don't fire while our own patched play() is mid-execution (e.g.
+        // the user clicked "next episode" themselves and we're already
+        // building a new queue) — that's the most likely cause of the
+        // "show plays twice with offset audio" bug.
+        if (window.__projectionistPlayInFlight) {
+            log('auto-next: skipped — play() already in flight');
+            return;
+        }
+
+        // Cooldown: never fire auto-next more than once per 10 seconds.
+        var nowMs = Date.now();
+        if (nowMs - __pjtAutoNext.lastFiredAtMs < 10000) {
+            log('auto-next: skipped — cooldown active');
+            return;
+        }
+
+        var state = info.state || {};
+        var nowPlayingItem = state.NowPlayingItem
+            || (state.PlayState && state.PlayState.NowPlayingItem)
+            || null;
+        if (!nowPlayingItem) {
+            try { nowPlayingItem = playbackManager.currentItem && playbackManager.currentItem(); } catch (_) {}
+        }
+        if (!nowPlayingItem || nowPlayingItem.Type !== 'Episode') return;
+        if (!nowPlayingItem.SeriesId) return;
+
+        // Strict natural-end check. Require BOTH a positive runtime AND
+        // a position at or beyond 85% of it. Without this, a "show only
+        // played for a second then jumped" symptom could trigger us to
+        // fire a duplicate playback while the real one is still loading.
+        var positionTicks = (state.PlayState && state.PlayState.PositionTicks) || 0;
+        var runTimeTicks = nowPlayingItem.RunTimeTicks || 0;
+        if (runTimeTicks <= 0) {
+            log('auto-next: skipped — no runtime info on stopped item');
+            return;
+        }
+        if (positionTicks < runTimeTicks * 0.85) {
+            // user stopped or navigated away before reaching the end
+            return;
+        }
+
+        // ---- SYNC FAST PATH ----
+        // If we pre-warmed during the back half of this episode (see
+        // maybePrefetchNextUp), we already know the next-up item and the
+        // user's auto-next preference. Fire playbackManager.play() RIGHT
+        // NOW, in the same event-loop tick as playbackstop. No awaits =
+        // no chance for jellyfin-web's queue-empty handling to navigate
+        // the user back to the home screen between this episode ending
+        // and the next one starting.
+        if (__pjtAutoNextEnabled === false) {
+            // user explicitly disabled auto-next-episode
+            return;
+        }
+        if (__pjtPrewarmed
+            && __pjtPrewarmed.forEpisodeId === nowPlayingItem.Id
+            && __pjtPrewarmed.nextEp
+            && (nowMs - __pjtPrewarmed.ts) < 120000) {
+            var prewarmedNextEp = __pjtPrewarmed.nextEp;
+            __pjtPrewarmed = null; // consume
+            if (prewarmedNextEp.Id !== nowPlayingItem.Id) {
+                __pjtAutoNext.lastFiredAtMs = nowMs;
+                __pjtAutoNext.lastFiredFor = prewarmedNextEp.Id;
+                log('auto-next (sync): playing', prewarmedNextEp.Name || prewarmedNextEp.Id);
+                try { playbackManager.play({ items: [prewarmedNextEp] }); }
+                catch (err) { console.warn(TAG, 'auto-next sync play failed', err); }
+                return;
+            }
+        }
+
+        // ---- ASYNC SLOW PATH ----
+        // Pre-warm didn't fire (very short episode, user jumped to end,
+        // first play after a tab refresh, etc). Fall back to the original
+        // async lookup. The home-screen flash will be visible here, but
+        // for the common case the sync path above keeps it clean.
+        var apiClient = getApiClient();
+        if (!apiClient) return;
+
+        apiClient.getCurrentUser().then(function (user) {
+            if (!user || !user.Configuration || !user.Configuration.EnableNextEpisodeAutoPlay) {
+                // user disabled auto-next in their settings; respect it
+                return null;
+            }
+            // Use getEpisodes with StartItemId to get the episode AFTER
+            // current — NOT NextUp (which returns the first unwatched ep
+            // and gives the wrong answer when watching mid-series).
+            return apiClient.getEpisodes(nowPlayingItem.SeriesId, {
+                UserId: apiClient.getCurrentUserId(),
+                StartItemId: nowPlayingItem.Id,
+                Limit: 2,
+                Fields: 'RunTimeTicks,MediaSourceCount'
+            });
+        }).then(function (eps) {
+            if (!eps || !Array.isArray(eps.Items) || eps.Items.length < 2) return;
+            var nextEp = eps.Items[1];
+            if (!nextEp || !nextEp.Id) return;
+            // Don't loop on the same episode (e.g. if it's still unwatched
+            // because we triggered playbackstop before the server recorded
+            // completion).
+            if (nextEp.Id === nowPlayingItem.Id) return;
+            // Don't fire for the same target within the cooldown window
+            // (extra belt-and-braces if cooldown timestamp is stale).
+            if (__pjtAutoNext.lastFiredFor === nextEp.Id
+                && nowMs - __pjtAutoNext.lastFiredAtMs < 15000) {
+                log('auto-next: skipped — already fired for this target recently');
+                return;
+            }
+            __pjtAutoNext.lastFiredAtMs = nowMs;
+            __pjtAutoNext.lastFiredFor = nextEp.Id;
+            log('auto-next: playing', nextEp.Name || nextEp.Id);
+            // No delay — intros for nextEp were pre-warmed during the
+            // back half of the current episode (see maybePrefetchNextUp),
+            // so the wrapped play() is a synchronous cache hit on
+            // fetchIntros and beats jellyfin-web's queue-empty navigate-
+            // to-home. Without the pre-warm, falling back to a network
+            // round-trip would re-introduce the home-screen flash.
+            try { playbackManager.play({ items: [nextEp] }); }
+            catch (err) { console.warn(TAG, 'auto-next play failed', err); }
+        }).catch(function (err) {
+            console.warn(TAG, 'auto-next lookup failed', err);
+        });
     }
 
     waitForPlaybackManager(patch);
@@ -873,8 +1384,12 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
     function loadConfigV2(attempts) {
         attempts = attempts || 0;
         var ac = getApiClient();
-        if (!ac) {
-            if (attempts < 150) setTimeout(function () { loadConfigV2(attempts + 1); }, 200);
+        var token = null;
+        try { token = ac && (typeof ac.accessToken === 'function' ? ac.accessToken() : ac.accessToken); } catch (_) {}
+        if (!ac || !token) {
+            // Not signed in yet (fresh load lands on the login page): the
+            // request would only 401 and never be retried. Wait locally.
+            setTimeout(function () { loadConfigV2(attempts); }, 1000);
             return;
         }
         ac.fetch({ url: ac.getUrl('Plugins/Projectionist/HookSettings'), type: 'GET', dataType: 'json' })
@@ -888,7 +1403,10 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
                 // doesn't have to wait on /Prerolls inside isPrerollItemId.
                 loadPrerollPaths();
             })
-            .catch(function (e) { dlog('config-failed', { msg: String(e) }); });
+            .catch(function (e) {
+                dlog('config-failed', { msg: String(e) });
+                if (attempts < 5) setTimeout(function () { loadConfigV2(attempts + 1); }, 3000);
+            });
     }
     loadConfigV2();
 
@@ -986,9 +1504,20 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
 
     var currentPrerollFileName = null;
     var attachedVideos = new WeakSet();
+    // The <video> currently showing a preroll, and the pending delayed
+    // reveal. onVideoMetadata runs for both 'loadedmetadata' and 'playing';
+    // an uncancelled reveal used to fire after a manual skip and put the
+    // button over the episode, where clicking it jumped to the episode's end.
+    var skipTarget = null;
+    var revealTimer = null;
+
+    function cancelReveal() {
+        if (revealTimer) { clearTimeout(revealTimer); revealTimer = null; }
+    }
 
     function showSkip(video) {
         ensureStyleV2();
+        skipTarget = video;
         var host = getOverlayHost();
         var btn = document.getElementById(BTN_ID);
         if (!btn) {
@@ -996,15 +1525,23 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
             btn.id = BTN_ID;
             btn.textContent = 'Skip';
             btn.addEventListener('click', function () {
+                var video = skipTarget;
+                cancelReveal();
+                btn.classList.add('pjt-hidden');
+                if (!video) return;
                 try {
                     // skip-rate reporting
                     try {
                         var ac = getApiClient();
                         if (ac && currentPrerollFileName) {
                             var seconds = video ? Math.round(video.currentTime * 10) / 10 : 0;
-                            fetch('/Plugins/Projectionist/SkipReport', {
+                            fetch(ac.getUrl('Plugins/Projectionist/SkipReport'), {
                                 method: 'POST',
-                                headers: { 'Content-Type': 'application/json', 'X-Emby-Token': ac.accessToken() },
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'X-Emby-Token': ac.accessToken(),
+                                    'Authorization': 'MediaBrowser Token="' + ac.accessToken() + '"'
+                                },
                                 body: JSON.stringify({ fileName: currentPrerollFileName, secondsBeforeSkip: seconds }),
                             }).catch(function () {});
                         }
@@ -1022,6 +1559,8 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
     }
 
     function hideSkip() {
+        cancelReveal();
+        skipTarget = null;
         var btn = document.getElementById(BTN_ID);
         if (btn) btn.classList.add('pjt-hidden');
         currentPrerollFileName = null;
@@ -1034,6 +1573,9 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
         dlog('video-metadata', { id: id, src: (src || '').substring(0, 120) });
         if (!id) { hideSkip(); return; }
         isPrerollItemId(id).then(function (isPre) {
+            // The element may have moved on to the next item while the
+            // lookup was in flight.
+            if (parseItemIdFromSrc(video.currentSrc || video.src) !== id) return;
             if (!isPre) { hideSkip(); return; }
             // Track filename for skip-rate reporting.
             var ac = getApiClient();
@@ -1050,8 +1592,14 @@ try { console.log('[Projectionist] hook script loaded'); } catch (_) {}
                     })
                     .catch(function () {});
             }
+            cancelReveal();
             if (minSkipSeconds > 0) {
-                setTimeout(function () { showSkip(video); }, minSkipSeconds * 1000);
+                revealTimer = setTimeout(function () {
+                    revealTimer = null;
+                    // Only reveal if the same preroll is still on screen.
+                    if (parseItemIdFromSrc(video.currentSrc || video.src) !== id || video.ended) return;
+                    showSkip(video);
+                }, minSkipSeconds * 1000);
             } else {
                 showSkip(video);
             }

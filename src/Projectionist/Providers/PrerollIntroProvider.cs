@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.Projectionist.Configuration;
@@ -9,12 +10,18 @@ using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.Projectionist.Providers;
 
 public sealed class PrerollIntroProvider : IIntroProvider
 {
+    // Matches Client="..." inside an X-Emby-Authorization / Authorization
+    // header value, e.g. MediaBrowser Client="Jellyfin Web", Device="Chrome", ...
+    private static readonly Regex ClientNameRegex = new(
+        "Client\\s*=\\s*\"([^\"]+)\"", RegexOptions.Compiled);
+
     private readonly ILogger<PrerollIntroProvider> _logger;
     private readonly PrerollDiscoveryService _discovery;
     private readonly PrerollSelector _selector;
@@ -27,6 +34,7 @@ public sealed class PrerollIntroProvider : IIntroProvider
     private readonly StatsStore _stats;
     private readonly FeatureOptOutStore _optOuts;
     private readonly ComingSoonPicker _comingSoon;
+    private readonly IHttpContextAccessor? _httpContext;
 
     public PrerollIntroProvider(
         ILogger<PrerollIntroProvider> logger,
@@ -40,7 +48,8 @@ public sealed class PrerollIntroProvider : IIntroProvider
         TrailerFetcher trailerFetcher,
         StatsStore stats,
         FeatureOptOutStore optOuts,
-        ComingSoonPicker comingSoon)
+        ComingSoonPicker comingSoon,
+        IHttpContextAccessor? httpContext = null)
     {
         _logger = logger;
         _discovery = discovery;
@@ -54,6 +63,7 @@ public sealed class PrerollIntroProvider : IIntroProvider
         _stats = stats;
         _optOuts = optOuts;
         _comingSoon = comingSoon;
+        _httpContext = httpContext;
     }
 
     public string Name => "Projectionist";
@@ -67,9 +77,43 @@ public sealed class PrerollIntroProvider : IIntroProvider
         if (config is null)
             return Task.FromResult(Enumerable.Empty<IntroInfo>());
 
-        if (_optOuts.IsOptedOut(item.Id))
+        if (_optOuts.IsOptedOut(item))
         {
-            _logger.LogDebug("[Projectionist] item {Item} is opted-out, skipping preroll", item.Name);
+            _logger.LogDebug("[Projectionist] item {Item} is opted-out (direct or via ancestor), skipping preroll", item.Name);
+            return Task.FromResult(Enumerable.Empty<IntroInfo>());
+        }
+
+        // ---- Recursion guard ----
+        // If the item being played IS one of our discovered prerolls (e.g.
+        // because the v1.2.0 web hook prepended it to the play queue, and
+        // Jellyfin's native playWithIntros is now calling /Intros on that
+        // intro item too), return empty. Otherwise PrerollIntroProvider
+        // would chain "intro of intro of intro" indefinitely.
+        if (IsKnownPrerollPath(item.Path, config))
+        {
+            _logger.LogDebug("[Projectionist] item {Item} is itself a preroll, skipping recursion", item.Name);
+            return Task.FromResult(Enumerable.Empty<IntroInfo>());
+        }
+
+        // ---- Client-type gate for Episodes ----
+        // Native TV/mobile clients (Jellyfin Android TV, iOS, Roku, etc.)
+        // either ignore the /Intros response for Episodes or, worse, try
+        // to play the returned intro items and fail with a brief
+        // "Playback Error" toast before falling through to the actual
+        // episode. Only the Web client (and Web-based derivatives like
+        // Jellyfin Media Player) reliably handle episode intros — partly
+        // because we drive them client-side via the playback-hook.
+        // Movies still go to every client (universal support).
+        var clientName = GetClientNameForLog();
+        _logger.LogDebug(
+            "[Projectionist] /Intros called: item={Name} type={Type} client={Client}",
+            item.Name, item.GetType().Name, clientName ?? "(unknown)");
+
+        if (item is Episode && !IsEpisodeIntroSupportedClient())
+        {
+            _logger.LogDebug(
+                "[Projectionist] /Intros skipped (non-Web client): item={Name} client={Client}",
+                item.Name, clientName ?? "(unknown)");
             return Task.FromResult(Enumerable.Empty<IntroInfo>());
         }
 
@@ -232,5 +276,69 @@ public sealed class PrerollIntroProvider : IIntroProvider
         }
 
         return item is Episode ? config.EpisodeSessionMode : config.MovieSessionMode;
+    }
+
+    private string? GetClientNameForLog()
+    {
+        try
+        {
+            var ctx = _httpContext?.HttpContext;
+            if (ctx is null) return null;
+            var auth = ctx.Request.Headers["X-Emby-Authorization"].ToString();
+            if (string.IsNullOrEmpty(auth)) auth = ctx.Request.Headers["Authorization"].ToString();
+            if (string.IsNullOrEmpty(auth)) return null;
+            var m = ClientNameRegex.Match(auth);
+            return m.Success ? m.Groups[1].Value : null;
+        }
+        catch { return null; }
+    }
+
+    private bool IsEpisodeIntroSupportedClient()
+    {
+        // Default-allow when there's no HTTP context — happens when other
+        // server-side code asks IIntroProvider directly (e.g. for offline
+        // pre-generation). Better to err on returning intros than to
+        // silently drop them.
+        var ctx = _httpContext?.HttpContext;
+        if (ctx is null) return true;
+
+        var auth = ctx.Request.Headers["X-Emby-Authorization"].ToString();
+        if (string.IsNullOrEmpty(auth)) auth = ctx.Request.Headers["Authorization"].ToString();
+        if (string.IsNullOrEmpty(auth)) return true;
+
+        var m = ClientNameRegex.Match(auth);
+        if (!m.Success) return true;
+
+        var client = m.Groups[1].Value ?? string.Empty;
+        var lower = client.ToLowerInvariant();
+        // Whitelist: clients whose play queue we KNOW handles intros
+        // correctly. Jellyfin Web for browsers + Jellyfin Media Player
+        // (Qt-wrapped jellyfin-web). Everything else is blocked for
+        // episode-only intros — movies are still served to all clients.
+        if (lower.Contains("web")) return true;
+        if (lower.Contains("media player")) return true;
+        return false;
+    }
+
+    private bool IsKnownPrerollPath(string? itemPath, PluginConfiguration config)
+    {
+        if (string.IsNullOrEmpty(itemPath)) return false;
+        try
+        {
+            var pool = _discovery.Discover(config);
+            foreach (var p in pool)
+            {
+                if (!string.IsNullOrEmpty(p.Path)
+                    && string.Equals(p.Path, itemPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[Projectionist] preroll-recursion check failed for {Path}", itemPath);
+        }
+        return false;
     }
 }
