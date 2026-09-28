@@ -40,13 +40,20 @@ public sealed class IndexHtmlInjectionFilter : IStartupFilter
         };
     }
 
-    private async Task InjectAsync(HttpContext context, Func<Task> nextMiddleware)
+    internal async Task InjectAsync(HttpContext context, Func<Task> nextMiddleware)
     {
         if (!IsIndexHtmlRequest(context.Request))
         {
             await nextMiddleware().ConfigureAwait(false);
             return;
         }
+
+        // [issue #7] Jellyfin 10.11.11+ and 12 compress index.html. This
+        // filter runs outside the compression middleware, so it used to
+        // append a plain-text <script> tag to a gzip/brotli body and the
+        // browser failed to decode the page. Asking for an uncompressed
+        // copy costs ~3 KB on a ~5 KB page and keeps the rewrite trivial.
+        context.Request.Headers.Remove("Accept-Encoding");
 
         var originalBody = context.Response.Body;
         using var captured = new MemoryStream();
@@ -63,8 +70,12 @@ public sealed class IndexHtmlInjectionFilter : IStartupFilter
 
         captured.Seek(0, SeekOrigin.Begin);
         var contentType = context.Response.ContentType ?? string.Empty;
-        if (!contentType.Contains("html", StringComparison.OrdinalIgnoreCase))
+        var contentEncoding = context.Response.Headers["Content-Encoding"].ToString();
+        if (!contentType.Contains("html", StringComparison.OrdinalIgnoreCase)
+            || !string.IsNullOrWhiteSpace(contentEncoding))
         {
+            // Not HTML, or still encoded by something we don't control:
+            // hand it back byte for byte rather than corrupt it.
             await captured.CopyToAsync(originalBody).ConfigureAwait(false);
             return;
         }
@@ -94,7 +105,7 @@ public sealed class IndexHtmlInjectionFilter : IStartupFilter
         _logger.LogInformation("[Projectionist] injected hook script into {Path}", context.Request.Path);
     }
 
-    private static bool IsIndexHtmlRequest(HttpRequest req)
+    internal static bool IsIndexHtmlRequest(HttpRequest req)
     {
         if (!HttpMethods.IsGet(req.Method)) return false;
         var path = req.Path.Value ?? string.Empty;
