@@ -145,6 +145,7 @@ How it stays correct:
 - The preroll is converted once to **the episode's own format** (H.264/HEVC, AAC/AC3/E-AC3/MP3, TS or fMP4, resolution, frame rate) and cached, so the stream never switches codec mid-way.
 - **External subtitles** are shifted by the preroll length, **progress reports** have it taken off (resume points and "watched" stay right), and **intro/credits markers** are shifted for that app.
 - Why `.mkv` only for "Always": when Jellyfin *copies* the video it can only cut the stream at keyframes, and it only knows where those are for the file types on that list. For other files it guesses 6-second pieces; with the ~10-second keyframe spacing many encodes use, it restarts the stream partway and apps like Android TV hang for a while at the end of the episode. That happens with or without Projectionist, so it won't push a file that direct-plays fine into it.
+- Cosmetic: apps label the seek bar with the episode's own length, so while the preroll plays the clock already counts (e.g. "0:05 / 0:30" during a 6-second preroll) and ends that many seconds past the runtime. Resume points and "watched" are unaffected.
 - Anything it can't do safely plays exactly as before: resumed episodes, HDR episodes, subtitles carried inside the HLS stream, unsupported codecs. If the first conversion of a clip takes longer than the configured wait, that episode starts without a preroll and the clip is ready next time.
 
 ---
