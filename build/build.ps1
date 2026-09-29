@@ -21,6 +21,14 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Windows PowerShell 5's Compress-Archive writes backslash path separators.
+# Jellyfin's installer on Linux takes them literally and the plugin lands as
+# a file named "Projectionist_X\Jellyfin.Plugin.Projectionist.dll" that never
+# loads. PowerShell 7 writes proper '/' entries.
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    throw "Run this with PowerShell 7 (pwsh): Windows PowerShell $($PSVersionTable.PSVersion) writes zips Jellyfin on Linux can't install."
+}
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
 $proj     = Join-Path $repoRoot 'src/Projectionist/Projectionist.csproj'
 $out      = Join-Path $repoRoot 'build-output'
