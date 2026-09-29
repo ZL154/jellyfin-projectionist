@@ -89,6 +89,10 @@ public static class HlsSplicing
         return allowed[0];
     }
 
+    /// <summary>True when <paramref name="target"/> is the source codec, i.e. Jellyfin copies the video.</summary>
+    public static bool IsSameVideoCodec(string target, string? sourceCodec)
+        => string.Equals(target, NormalizeVideo(sourceCodec), StringComparison.Ordinal);
+
     private static string? NormalizeVideo(string? codec) => codec?.Trim().ToLowerInvariant() switch
     {
         null or "" => null,

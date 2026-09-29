@@ -212,7 +212,8 @@ public sealed class NativePrerollMiddleware : IStartupFilter
 
         if (cfg.NativeEpisodePrerollMode == NativeEpisodePrerollMode.ForceRemux && body?["DeviceProfile"] is JsonObject profile)
         {
-            if (IsRemuxSafe(services, episode))
+            var why = WhyNotForceRemux(services, episode, auth, profile, body);
+            if (why is null)
             {
                 PrepareProfileForRemux(profile);
                 ReplaceRequestBody(ctx.Request, body.ToJsonString());
@@ -220,9 +221,7 @@ public sealed class NativePrerollMiddleware : IStartupFilter
             else
             {
                 // Still spliced below if Jellyfin chooses HLS on its own.
-                _logger.LogInformation(
-                    "[Projectionist] {Episode}: not forcing a remux, Jellyfin has no keyframe data for {Ext} files (see AllowOnDemandMetadataBasedKeyframeExtractionForExtensions)",
-                    episode.Name, Path.GetExtension(episode.Path));
+                _logger.LogInformation("[Projectionist] {Episode}: not forcing HLS, {Reason}", episode.Name, why);
             }
         }
 
@@ -443,12 +442,52 @@ public sealed class NativePrerollMiddleware : IStartupFilter
         }
     }
 
-    private static HlsTarget? ResolveTarget(IServiceProvider services, Episode episode, AuthorizationInfo auth, IReadOnlyDictionary<string, string> query)
+    /// <summary>
+    /// Why "Always" must not switch this episode off direct play, or null if
+    /// it may. Forcing is only worth it when the result is a cheap remux that
+    /// we can put a matching preroll in front of: the app's own HLS profile
+    /// must let Jellyfin copy the video (an AV1 file on an app whose HLS list
+    /// is h264,hevc would otherwise be fully re-encoded, for no preroll), the
+    /// stream must be one we can match (not HDR, known codecs), and Jellyfin
+    /// must know the file's keyframes.
+    /// </summary>
+    private static string? WhyNotForceRemux(IServiceProvider services, Episode episode, AuthorizationInfo auth, JsonObject profile, JsonObject? body)
+    {
+        if (!IsRemuxSafe(services, episode))
+        {
+            return $"Jellyfin has no keyframe data for {Path.GetExtension(episode.Path)} files (AllowOnDemandMetadataBasedKeyframeExtractionForExtensions)";
+        }
+
+        var hls = (profile["TranscodingProfiles"] as JsonArray)?.OfType<JsonObject>().FirstOrDefault(t =>
+            string.Equals(Str(t["Protocol"]), "hls", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(Str(t["Type"]), "Audio", StringComparison.OrdinalIgnoreCase));
+        if (hls is null) return "the app has no HLS video profile";
+
+        var query = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["VideoCodec"] = Str(hls["VideoCodec"]) ?? string.Empty,
+            ["AudioCodec"] = Str(hls["AudioCodec"]) ?? string.Empty,
+            ["SegmentContainer"] = string.Equals(Str(hls["Container"]), "mp4", StringComparison.OrdinalIgnoreCase) ? "mp4" : "ts",
+            ["MediaSourceId"] = Str(body?["MediaSourceId"]) ?? string.Empty,
+            ["AudioStreamIndex"] = ReadLong(body?["AudioStreamIndex"]) is var ai and > 0 ? ai.ToString(CultureInfo.InvariantCulture) : string.Empty,
+        };
+        var (video, _) = PickStreams(services, episode, auth, query);
+        var target = ResolveTarget(services, episode, auth, query);
+        if (target is null) return "the stream can't be matched (HDR or an unsupported codec)";
+        if (!HlsSplicing.IsSameVideoCodec(target.VideoCodec, video?.Codec))
+        {
+            return $"the app's HLS profile would re-encode {video?.Codec} video to {target.VideoCodec}";
+        }
+
+        return null;
+    }
+
+    private static (MediaStream? Video, MediaStream? Audio) PickStreams(IServiceProvider services, Episode episode, AuthorizationInfo auth, IReadOnlyDictionary<string, string> query)
     {
         var sources = services.GetRequiredService<IMediaSourceManager>().GetStaticMediaSources(episode, false, auth.User);
         query.TryGetValue("MediaSourceId", out var sourceId);
         var source = sources.FirstOrDefault(s => string.Equals(s.Id, sourceId, StringComparison.OrdinalIgnoreCase)) ?? sources.FirstOrDefault();
-        if (source is null) return null;
+        if (source is null) return (null, null);
 
         var video = source.MediaStreams.FirstOrDefault(s => s.Type == MediaStreamType.Video);
         MediaStream? audio = null;
@@ -459,6 +498,12 @@ public sealed class NativePrerollMiddleware : IStartupFilter
 
         audio ??= source.MediaStreams.FirstOrDefault(s => s.Type == MediaStreamType.Audio && s.IsDefault)
                   ?? source.MediaStreams.FirstOrDefault(s => s.Type == MediaStreamType.Audio);
+        return (video, audio);
+    }
+
+    private static HlsTarget? ResolveTarget(IServiceProvider services, Episode episode, AuthorizationInfo auth, IReadOnlyDictionary<string, string> query)
+    {
+        var (video, audio) = PickStreams(services, episode, auth, query);
         if (video is null) return null;
 
         var range = video.VideoRange.ToString();

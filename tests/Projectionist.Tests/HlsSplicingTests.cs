@@ -179,3 +179,16 @@ public class RemuxProfileTests
         Assert.Equal(new[] { "srt/External", "pgssub/Hls", "pgssub/Encode" }, subs);
     }
 }
+
+public class VideoCopyTests
+{
+    [Theory]
+    [InlineData("hevc", "hevc", true)]
+    [InlineData("hevc", "h265", true)]
+    [InlineData("h264", "avc", true)]
+    [InlineData("h264", "av1", false)]   // AV1 source on an h264,hevc HLS profile = full re-encode
+    [InlineData("h264", "hevc", false)]
+    [InlineData("h264", null, false)]
+    public void IsSameVideoCodec(string target, string? source, bool expected)
+        => Assert.Equal(expected, Jellyfin.Plugin.Projectionist.Native.HlsSplicing.IsSameVideoCodec(target, source));
+}
