@@ -212,7 +212,8 @@ public sealed class NativePrerollMiddleware : IStartupFilter
 
         if (cfg.NativeEpisodePrerollMode == NativeEpisodePrerollMode.ForceRemux && body?["DeviceProfile"] is JsonObject profile)
         {
-            var why = WhyNotForceRemux(services, episode, auth, profile, body);
+            var why = WhyNotForceRemux(services, episode, auth, profile, body)
+                      ?? await SubtitleWouldBeBurnedInAsync(services, episode, auth, profile, body).ConfigureAwait(false);
             if (why is null)
             {
                 PrepareProfileForRemux(profile);
@@ -406,6 +407,10 @@ public sealed class NativePrerollMiddleware : IStartupFilter
                 return entries;
             }
 
+            // Get every other preroll ready for this format too.
+            var pool = services.GetService<Services.PrerollDiscoveryService>()?.Discover(Plugin.Instance!.Configuration);
+            if (pool is not null) _encoder.WarmUp(pool.Select(p => p.Path), target);
+
             var timeout = TimeSpan.FromSeconds(Math.Clamp(Plugin.Instance?.Configuration.NativePrerollEncodeTimeoutSeconds ?? 20, 2, 120));
             var work = Task.WhenAll(session.PrerollPaths.Select(p => _encoder.GetOrEncodeAsync(p, target)));
             if (await Task.WhenAny(work, Task.Delay(timeout)).ConfigureAwait(false) == work)
@@ -481,6 +486,44 @@ public sealed class NativePrerollMiddleware : IStartupFilter
 
         return null;
     }
+
+    /// <summary>
+    /// Over direct play the app renders subtitles itself; over HLS a track it
+    /// can't take as a separate file (ASS on Android TV, any image-based
+    /// PGS/VobSub track) is burned into the picture, a full video re-encode.
+    /// Anime with default ASS tracks hit this on every episode, so check the
+    /// track that will actually be on (the app's pick, or Jellyfin's default
+    /// for this user) and keep direct play if it can't go out as a file.
+    /// </summary>
+    private static async Task<string?> SubtitleWouldBeBurnedInAsync(IServiceProvider services, Episode episode, AuthorizationInfo auth, JsonObject profile, JsonObject? body)
+    {
+        var sources = await services.GetRequiredService<IMediaSourceManager>()
+            .GetPlaybackMediaSources(episode, auth.User, false, false, System.Threading.CancellationToken.None)
+            .ConfigureAwait(false);
+        var sourceId = Str(body?["MediaSourceId"]);
+        var source = sources.FirstOrDefault(s => string.Equals(s.Id, sourceId, StringComparison.OrdinalIgnoreCase)) ?? sources.FirstOrDefault();
+        if (source is null) return null;
+
+        int? index = body?["SubtitleStreamIndex"] is JsonValue v && v.TryGetValue<int>(out var requested) ? requested : source.DefaultSubtitleStreamIndex;
+        if (index is null or < 0) return null;
+
+        var stream = source.MediaStreams.FirstOrDefault(s => s.Type == MediaStreamType.Subtitle && s.Index == index);
+        if (stream is null) return null;
+
+        var codec = NormalizeSubtitle(stream.Codec);
+        var external = (profile["SubtitleProfiles"] as JsonArray)?.OfType<JsonObject>()
+            .Any(p => string.Equals(Str(p["Method"]), "External", StringComparison.OrdinalIgnoreCase)
+                      && string.Equals(NormalizeSubtitle(Str(p["Format"])), codec, StringComparison.Ordinal)) ?? false;
+        return external ? null : $"its {stream.Codec} subtitle track would be burned into the picture";
+    }
+
+    private static string NormalizeSubtitle(string? codec) => (codec ?? string.Empty).Trim().ToLowerInvariant() switch
+    {
+        "srt" or "subrip" => "srt",
+        "ass" or "ssa" => "ass",
+        "vtt" or "webvtt" => "vtt",
+        var other => other,
+    };
 
     private static (MediaStream? Video, MediaStream? Audio) PickStreams(IServiceProvider services, Episode episode, AuthorizationInfo auth, IReadOnlyDictionary<string, string> query)
     {

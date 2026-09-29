@@ -11,7 +11,9 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Common.Configuration;
+using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.MediaEncoding;
+using MediaBrowser.Model.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.Projectionist.Native;
@@ -33,8 +35,12 @@ public sealed class PrerollHlsEncoder
     private static readonly TimeSpan UnusedLifetime = TimeSpan.FromDays(60);
     private int _swept;
 
-    public PrerollHlsEncoder(ILogger<PrerollHlsEncoder> logger, IApplicationPaths appPaths, IMediaEncoder mediaEncoder)
+    private readonly IServerConfigurationManager? _serverConfig;
+    private readonly ConcurrentDictionary<string, byte> _warmedTargets = new();
+
+    public PrerollHlsEncoder(ILogger<PrerollHlsEncoder> logger, IApplicationPaths appPaths, IMediaEncoder mediaEncoder, IServerConfigurationManager? serverConfig = null)
     {
+        _serverConfig = serverConfig;
         _logger = logger;
         _appPaths = appPaths;
         _mediaEncoder = mediaEncoder;
@@ -131,39 +137,36 @@ public sealed class PrerollHlsEncoder
 
         try
         {
-            var psi = new ProcessStartInfo
-            {
-                FileName = ffmpeg,
-                RedirectStandardError = true,
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WorkingDirectory = work,
-            };
             var hasAudio = await HasAudioAsync(prerollPath).ConfigureAwait(false);
-            foreach (var a in BuildArgs(prerollPath, target, ext, hasAudio)) psi.ArgumentList.Add(a);
 
-            using var proc = Process.Start(psi) ?? throw new InvalidOperationException("ffmpeg did not start");
-            var stderr = proc.StandardError.ReadToEndAsync();
-            _ = proc.StandardOutput.ReadToEndAsync();
-            using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(10));
-            try
+            // Jellyfin's own hardware encoder first (a 9 s 1080p clip: ~1.7 s
+            // on NVENC vs ~19 s with x265 "fast" on a typical server CPU), then
+            // software if the hardware attempt fails for any reason.
+            var hw = HardwareEncoderFor(target.VideoCodec);
+            var encoders = hw is null ? new[] { (string?)null } : new[] { hw, null };
+            string? usedEncoder = null;
+            foreach (var encoder in encoders)
             {
-                await proc.WaitForExitAsync(cts.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
-                throw;
+                foreach (var f in Directory.EnumerateFiles(work)) File.Delete(f);
+                var (code, err) = await RunFfmpegAsync(ffmpeg, work, BuildArgs(prerollPath, target, ext, hasAudio, encoder)).ConfigureAwait(false);
+                if (code == 0)
+                {
+                    usedEncoder = encoder ?? (target.VideoCodec == "hevc" ? "libx265" : "libx264");
+                    break;
+                }
+
+                _logger.Log(
+                    encoder is null ? LogLevel.Error : LogLevel.Warning,
+                    "[Projectionist] converting {File} for {Target} with {Encoder} failed (exit {Code}){Next}: {Err}",
+                    Path.GetFileName(prerollPath),
+                    target.Key,
+                    encoder ?? "software",
+                    code,
+                    encoder is null ? string.Empty : ", retrying in software",
+                    err.Length > 400 ? err[^400..] : err);
             }
 
-            var err = await stderr.ConfigureAwait(false);
-            if (proc.ExitCode != 0)
-            {
-                _logger.LogError("[Projectionist] converting {File} for {Target} failed (exit {Code}): {Err}",
-                    Path.GetFileName(prerollPath), target.Key, proc.ExitCode, err.Length > 600 ? err[^600..] : err);
-                return null;
-            }
+            if (usedEncoder is null) return null;
 
             var segments = ParsePlaylist(Path.Combine(work, "index.m3u8"));
             if (segments.Count == 0) return null;
@@ -173,8 +176,8 @@ public sealed class PrerollHlsEncoder
             // Publish atomically so a half-written folder is never served.
             if (Directory.Exists(dir)) Directory.Delete(dir, true);
             Directory.Move(work, dir);
-            _logger.LogInformation("[Projectionist] converted {File} for native apps ({Target}, {Count} segments, {Secs:0.0}s) in {Ms} ms",
-                Path.GetFileName(prerollPath), target.Key, segments.Count, segments.Sum(s => s.Duration), sw.ElapsedMilliseconds);
+            _logger.LogInformation("[Projectionist] converted {File} for native apps ({Target}, {Count} segments, {Secs:0.0}s) with {Encoder} in {Ms} ms",
+                Path.GetFileName(prerollPath), target.Key, segments.Count, segments.Sum(s => s.Duration), usedEncoder, sw.ElapsedMilliseconds);
             return entry;
         }
         catch (Exception ex)
@@ -219,7 +222,75 @@ public sealed class PrerollHlsEncoder
         }
     }
 
-    internal static IReadOnlyList<string> BuildArgs(string input, HlsTarget t, string ext, bool hasAudio)
+    /// <summary>
+    /// Convert every preroll for <paramref name="target"/> in the background,
+    /// once per format per server run. The first episode in a new format
+    /// waits for its own preroll; after that, whichever clip gets picked is
+    /// already on disk.
+    /// </summary>
+    public void WarmUp(IEnumerable<string> prerollPaths, HlsTarget target)
+    {
+        if (!_warmedTargets.TryAdd(target.Key, 0)) return;
+        var paths = prerollPaths.Where(File.Exists).Distinct(StringComparer.Ordinal).ToList();
+        _ = Task.Run(async () =>
+        {
+            foreach (var p in paths)
+            {
+                await GetOrEncodeAsync(p, target).ConfigureAwait(false);
+            }
+        });
+    }
+
+    private static async Task<(int Code, string Err)> RunFfmpegAsync(string ffmpeg, string work, IReadOnlyList<string> args)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = ffmpeg,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WorkingDirectory = work,
+        };
+        foreach (var a in args) psi.ArgumentList.Add(a);
+
+        using var proc = Process.Start(psi) ?? throw new InvalidOperationException("ffmpeg did not start");
+        var stderr = proc.StandardError.ReadToEndAsync();
+        _ = proc.StandardOutput.ReadToEndAsync();
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+        try
+        {
+            await proc.WaitForExitAsync(cts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            try { proc.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+            throw;
+        }
+
+        return (proc.ExitCode, await stderr.ConfigureAwait(false));
+    }
+
+    /// <summary>
+    /// The hardware encoder matching Jellyfin's transcoding settings, or null
+    /// for software. VAAPI/V4L2/RKMPP are left to software: they need device
+    /// setup and upload filters that differ per machine.
+    /// </summary>
+    private string? HardwareEncoderFor(string videoCodec)
+    {
+        if (_serverConfig?.GetConfiguration("encoding") is not EncodingOptions o || !o.EnableHardwareEncoding) return null;
+        var hevc = videoCodec == "hevc";
+        return o.HardwareAccelerationType.ToString().ToLowerInvariant() switch
+        {
+            "nvenc" => hevc ? "hevc_nvenc" : "h264_nvenc",
+            "amf" => hevc ? "hevc_amf" : "h264_amf",
+            "qsv" => hevc ? "hevc_qsv" : "h264_qsv",
+            "videotoolbox" => hevc ? "hevc_videotoolbox" : "h264_videotoolbox",
+            _ => null,
+        };
+    }
+
+    internal static IReadOnlyList<string> BuildArgs(string input, HlsTarget t, string ext, bool hasAudio, string? hwEncoder = null)
     {
         var args = new List<string> { "-hide_banner", "-nostats", "-loglevel", "error", "-y", "-i", input };
 
@@ -239,14 +310,33 @@ public sealed class PrerollHlsEncoder
             "-force_key_frames", $"expr:gte(t,n_forced*{SegmentSeconds})",
         });
 
-        if (t.VideoCodec == "hevc")
+        var hevc = t.VideoCodec == "hevc";
+        switch (hwEncoder)
         {
-            args.AddRange(new[] { "-c:v", "libx265", "-preset", "fast", "-crf", "23", "-tag:v", "hvc1", "-x265-params", "log-level=error" });
+            case null when hevc:
+                // "ultrafast": a short clip, and speed decides whether the first
+                // play waits. Measured 6.5 s vs 19 s ("fast") for 9 s of 1080p.
+                args.AddRange(new[] { "-c:v", "libx265", "-preset", "ultrafast", "-crf", "22", "-x265-params", "log-level=error" });
+                break;
+            case null:
+                args.AddRange(new[] { "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-profile:v", "high" });
+                break;
+            case var e when e.EndsWith("_nvenc", StringComparison.Ordinal):
+                // forced-idr: segment boundaries must be IDR frames.
+                args.AddRange(new[] { "-c:v", e, "-preset", "p4", "-rc", "vbr", "-cq", hevc ? "23" : "21", "-b:v", "0", "-forced-idr", "1" });
+                break;
+            case var e when e.EndsWith("_qsv", StringComparison.Ordinal):
+                args.AddRange(new[] { "-c:v", e, "-global_quality", "23", "-look_ahead", "0" });
+                break;
+            case var e when e.EndsWith("_amf", StringComparison.Ordinal):
+                args.AddRange(new[] { "-c:v", e, "-rc", "cqp", "-qp_i", "22", "-qp_p", "24" });
+                break;
+            default:
+                args.AddRange(new[] { "-c:v", hwEncoder, "-q:v", "60" });
+                break;
         }
-        else
-        {
-            args.AddRange(new[] { "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-profile:v", "high" });
-        }
+
+        if (hevc) args.AddRange(new[] { "-tag:v", "hvc1" });
 
         var audio = t.AudioCodec switch
         {
