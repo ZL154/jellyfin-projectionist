@@ -27,8 +27,11 @@ that ships everything below as well as the 1.2.0 section.
   default. The preroll is converted to the episode's own format and spliced
   into its HLS stream on the server; external subtitles, progress reports
   and intro/credits markers are shifted to match. "Always" mode switches
-  episodes that get a preroll from direct play to an HLS remux. Resumes, HDR
-  and in-stream subtitles play without a preroll.
+  episodes that get a preroll from direct play to an HLS remux, only for
+  file types Jellyfin has keyframe data for (.mkv by default). Resumes, HDR
+  and in-stream subtitles play without a preroll. Verified in the Jellyfin
+  Android TV app (0.19.10): preroll hand-off, subtitle timing, intro-skip
+  prompt timing.
 - **Post-rolls actually play.** They were log-only in 1.2.0. They play after
   a movie, after an episode when auto-play is off, and after the last
   episode of a series.

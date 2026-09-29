@@ -818,7 +818,7 @@
                             <option value="1">Only when the episode is already streamed as HLS</option>
                             <option value="2">Always - switch episodes with a preroll to HLS</option>
                         </select>
-                        <div class="pjt-hint">"Always" turns off direct play only for episodes that get a preroll; Jellyfin copies the video and audio where the app supports them, so it's normally a remux, not a transcode. Resumed episodes, HDR episodes and subtitles carried inside the stream play without a preroll.</div>
+                        <div class="pjt-hint">"Always" turns off direct play only for episodes that get a preroll; Jellyfin copies the video and audio where the app supports them, so it's normally a remux, not a transcode. It's only done for file types Jellyfin has keyframe data for (.mkv by default); other files get a preroll when Jellyfin streams them as HLS anyway. Resumed episodes, HDR episodes and subtitles carried inside the stream play without a preroll.</div>
                     </div>
                     <div class="pjt-row">
                         <label class="pjt-label" for="pjt-native-timeout">Conversion wait (seconds)</label>

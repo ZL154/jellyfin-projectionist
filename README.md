@@ -138,12 +138,13 @@ Native apps never load that script, so for them Projectionist puts the preroll *
 |---------|--------------|
 | **Off** (default) | Native apps play episodes without prerolls. Movies still get them. |
 | **Only when already streamed as HLS** | If Jellyfin is already streaming the episode as HLS (the app can't play the file directly), the preroll is spliced in. Nothing else changes. |
-| **Always** | For episodes that get a preroll, direct play is switched off so Jellyfin streams HLS. Video and audio are **copied** where the app supports them (a remux, not a transcode). Episodes without a preroll are untouched. |
+| **Always** | For episodes that get a preroll, direct play is switched off so Jellyfin streams HLS. Video and audio are **copied** where the app supports them (a remux, not a transcode). Episodes without a preroll are untouched. Only done for file types Jellyfin knows the keyframes of — `.mkv` by default (Dashboard → Playback → Transcoding, *Allow on-demand keyframe extraction* list); other files still get a preroll whenever Jellyfin streams them as HLS anyway. |
 
 How it stays correct:
 
 - The preroll is converted once to **the episode's own format** (H.264/HEVC, AAC/AC3/E-AC3/MP3, TS or fMP4, resolution, frame rate) and cached, so the stream never switches codec mid-way.
 - **External subtitles** are shifted by the preroll length, **progress reports** have it taken off (resume points and "watched" stay right), and **intro/credits markers** are shifted for that app.
+- Why `.mkv` only for "Always": when Jellyfin *copies* the video it can only cut the stream at keyframes, and it only knows where those are for the file types on that list. For other files it guesses 6-second pieces; with the ~10-second keyframe spacing many encodes use, it restarts the stream partway and apps like Android TV hang for a while at the end of the episode. That happens with or without Projectionist, so it won't push a file that direct-plays fine into it.
 - Anything it can't do safely plays exactly as before: resumed episodes, HDR episodes, subtitles carried inside the HLS stream, unsupported codecs. If the first conversion of a clip takes longer than the configured wait, that episode starts without a preroll and the clip is ready next time.
 
 ---

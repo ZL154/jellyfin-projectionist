@@ -12,7 +12,9 @@ using Jellyfin.Plugin.Projectionist.Configuration;
 using Jellyfin.Plugin.Projectionist.Providers;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
+using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.Configuration;
 using MediaBrowser.Controller.Net;
 using MediaBrowser.Model.Entities;
 using Microsoft.AspNetCore.Builder;
@@ -210,8 +212,18 @@ public sealed class NativePrerollMiddleware : IStartupFilter
 
         if (cfg.NativeEpisodePrerollMode == NativeEpisodePrerollMode.ForceRemux && body?["DeviceProfile"] is JsonObject profile)
         {
-            PrepareProfileForRemux(profile);
-            ReplaceRequestBody(ctx.Request, body.ToJsonString());
+            if (IsRemuxSafe(services, episode))
+            {
+                PrepareProfileForRemux(profile);
+                ReplaceRequestBody(ctx.Request, body.ToJsonString());
+            }
+            else
+            {
+                // Still spliced below if Jellyfin chooses HLS on its own.
+                _logger.LogInformation(
+                    "[Projectionist] {Episode}: not forcing a remux, Jellyfin has no keyframe data for {Ext} files (see AllowOnDemandMetadataBasedKeyframeExtractionForExtensions)",
+                    episode.Name, Path.GetExtension(episode.Path));
+            }
         }
 
         var (status, text) = await CaptureAsync(ctx, next).ConfigureAwait(false);
@@ -294,6 +306,28 @@ public sealed class NativePrerollMiddleware : IStartupFilter
         }
 
         return paths;
+    }
+
+    /// <summary>
+    /// Whether Jellyfin can remux this file into HLS cleanly. When it copies
+    /// the video, segments can only start on keyframes; Jellyfin knows where
+    /// they are only for extensions in AllowOnDemandMetadataBasedKeyframe-
+    /// ExtractionForExtensions (mkv by default). For anything else it guesses
+    /// fixed-length segments, and a file with keyframes further apart than
+    /// that (common: ~10 s) makes it restart the job mid-stream; ExoPlayer
+    /// then sees audio timestamps jump backwards and hangs ~18 s at the end.
+    /// That happens with or without a preroll, but we must not force a file
+    /// that direct-plays fine into it.
+    /// </summary>
+    internal static bool IsRemuxSafe(IServiceProvider services, BaseItem item)
+    {
+        var ext = Path.GetExtension(item.Path ?? string.Empty).TrimStart('.');
+        if (ext.Length == 0) return false;
+        var allowed = (services.GetService<IServerConfigurationManager>()
+                ?.GetConfiguration("encoding") as EncodingOptions)
+            ?.AllowOnDemandMetadataBasedKeyframeExtractionForExtensions
+            ?? new[] { "mkv" };
+        return allowed.Any(a => string.Equals(a?.TrimStart('.'), ext, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
