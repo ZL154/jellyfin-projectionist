@@ -184,10 +184,19 @@ Then:
 
 ### Manual install
 
-1. Download [`projectionist_1.2.0.0.zip`](https://github.com/ZL154/jellyfin-projectionist/releases/latest/download/projectionist_1.2.0.0.zip) from the latest release.
-2. Extract it into your Jellyfin plugins directory so the path looks like:
-   - **Docker:** `<config-volume>/plugins/Projectionist_1.2.0.0/`
-   - **Bare metal:** `<jellyfin-data>/plugins/Projectionist_1.2.0.0/`
+1. Download the zip for your Jellyfin version from the [latest release](https://github.com/ZL154/jellyfin-projectionist/releases/latest):
+
+   | Your Jellyfin | Download |
+   |---------------|----------|
+   | 12.x | [`projectionist_1.3.0.1.zip`](https://github.com/ZL154/jellyfin-projectionist/releases/latest/download/projectionist_1.3.0.1.zip) |
+   | 10.11.x | [`projectionist_1.3.0.0.zip`](https://github.com/ZL154/jellyfin-projectionist/releases/latest/download/projectionist_1.3.0.0.zip) |
+
+   Jellyfin won't load the wrong one, so check your version under **Dashboard → About** first.
+2. Extract it into your Jellyfin plugins directory. The zip already contains the folder, so you end up with:
+   - **Docker:** `<config-volume>/plugins/Projectionist_1.3.0.0/` (or `_1.3.0.1/`)
+   - **Bare metal:** `<jellyfin-data>/plugins/Projectionist_1.3.0.0/` (or `_1.3.0.1/`)
+
+   Remove any older `Projectionist_*` folder so only one version is loaded.
 3. Restart Jellyfin.
 4. Dashboard → Plugins → Projectionist → configure.
 
@@ -293,15 +302,15 @@ For movies that's the whole story. The provider:
 2. Checks per-user inclusion / exclusion
 3. Checks resume position (if enabled, skip if resuming)
 4. Checks session mode (FirstOfSession / OncePerDay / FirstOfBinge)
-5. Looks for a per-series preroll if the feature is an episode and `EnableSeriesPrerolls` is on
+5. Looks for a per-series preroll if the feature is an episode and `EnableSeriesPrerolls` is on (in the show's `extras` / `other` folder, then the show folder itself). That clip is already in your TV library, so it's handed over under its own library id
 6. Otherwise discovers candidates from all configured folders, applies schedule + maturity + tag + cooldown filters
 7. Picks N according to the selection mode
 8. (Optional) prepends N local trailers
-9. Resolves each pick via the hidden library to get a real `BaseItem.Id` (required for `MediaSourceInfo` lookup)
+9. Resolves each pick via the hidden library to get a real `BaseItem.Id` (required for `MediaSourceInfo` lookup). A clip that isn't a library item yet (folder not scanned) is skipped with a warning rather than handed over, because Jellyfin silently drops intros it can't find
 10. Optionally warms the feature's Jellyfin playback info in the web client while prerolls are running
 11. Records cooldown, stats, session bookkeeping
 
-For **episodes**, the bundled JavaScript hook calls the same endpoint client-side because Jellyfin's web/desktop/TV clients won't.
+For **episodes**, jellyfin-web (browsers, Jellyfin Media Player) never asks for intros, so the bundled JavaScript hook calls the same endpoint client-side. Native apps don't run that script; for them the preroll is spliced into the episode's HLS stream on the server (opt-in, see [Native apps](#native-apps-android-tv-ios-roku--v130)).
 
 The hidden internal library exists because Jellyfin's player resolves `MediaSourceInfo` via `BaseItem.Id` — a path-only intro returns successfully but silently fails to stream. The library gives our prerolls real `BaseItem` IDs without the user having to manage a Jellyfin library themselves.
 
@@ -375,9 +384,26 @@ With it off, the server doesn't hand episode intros to native apps at all. Some 
 
 Slightly — a few hundred milliseconds added by discovery + selection + media-source resolution. Enable Feature Preload (Warm or Hot) to mask most of that latency.
 
+### The web UI is blank / "failed to decode" after installing.
+
+That's Jellyfin 10.11.11+ and 12 serving a compressed `index.html`, which older Projectionist versions couldn't handle ([#7](https://github.com/ZL154/jellyfin-projectionist/issues/7)). Update to v1.3.0, restart Jellyfin, then hard-refresh the browser (Ctrl+F5).
+
+### My per-series preroll never plays, or shows up as an episode / in "Up Next".
+
+Before v1.3.0, per-series prerolls were logged and counted as played but never actually played ([#8](https://github.com/ZL154/jellyfin-projectionist/issues/8)). Update, then put the clip in an `extras` folder inside the show and rescan the TV library:
+
+```
+Supernatural/
+  extras/
+    theme-preroll.mkv
+  Season 1/
+```
+
+Jellyfin lists any loose video in a show's folder as an episode; inside `extras/` it's a show extra instead. The file name must match **Series preroll filename** in the settings (default `theme-preroll`).
+
 ### My preroll plays but the skip button never shows.
 
-Fixed in v1.2.0. Update.
+Fixed in v1.3.0 (it was part of the never-published v1.2.0). Update.
 
 ### The "Projectionist Prerolls" library is showing in my home view.
 
