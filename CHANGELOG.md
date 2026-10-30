@@ -45,6 +45,14 @@ that ships everything below as well as the 1.2.0 section.
   ([#7](https://github.com/ZL154/jellyfin-projectionist/issues/7)). Those
   versions compress `index.html`, and the script tag was appended to the
   compressed bytes.
+- **Per-series prerolls never played**
+  ([#8](https://github.com/ZL154/jellyfin-projectionist/issues/8)). The clip
+  was handed to Jellyfin under an id made up from its path; Jellyfin drops
+  intros it can't find, so nothing played but the stats counted it. It now
+  uses the clip's real library id, and is also found in the show's `extras`
+  or `other` folder, where Jellyfin doesn't list it as an episode. Clips
+  that aren't library items yet are skipped with a warning instead of being
+  counted as played.
 - Skip-rate reports and the admin preview returned 401 on Jellyfin 12,
   which only accepts the `Authorization: MediaBrowser Token=` header.
 - Player settings (skip delay, skip on/off, preload mode) were never loaded

@@ -102,7 +102,10 @@ public sealed class PrerollIntroProvider : IIntroProvider
         // would chain "intro of intro of intro" indefinitely.
         // The hidden library also holds post-rolls, which must not get
         // prerolls of their own either.
-        if (IsKnownPrerollPath(item.Path, config) || _hiddenLibrary.IsManagedItem(item))
+        if (IsKnownPrerollPath(item.Path, config)
+            || _hiddenLibrary.IsManagedItem(item)
+            || (item is Episode && config.EnableSeriesPrerolls
+                && SeriesPrerollFinder.IsSeriesPrerollFile(item.Path, config.SeriesPrerollFileName)))
         {
             _logger.LogDebug("[Projectionist] item {Item} is itself a preroll/post-roll, skipping recursion", item.Name);
             return Task.FromResult(Enumerable.Empty<IntroInfo>());
@@ -196,9 +199,22 @@ public sealed class PrerollIntroProvider : IIntroProvider
             var seriesPick = _seriesFinder.FindForEpisode(item, config.SeriesPrerollFileName);
             if (seriesPick is not null)
             {
-                picks.Add((seriesPick.Path, seriesPick.DeterministicId));
-                _logger.LogInformation("[Projectionist] using per-series preroll for {Series}",
-                    (item as Episode)?.Series?.Name);
+                // The file sits in the TV library, not our hidden one, so
+                // Jellyfin only plays it under the id its own scan gave it.
+                // An id made up from the path is dropped by Jellyfin with
+                // "Unable to locate item" and nothing plays (#8).
+                if (_libraryManager.FindByPath(seriesPick.Path, false) is Video seriesItem)
+                {
+                    picks.Add((seriesItem.Path, seriesItem.Id));
+                    _logger.LogInformation("[Projectionist] using per-series preroll for {Series}",
+                        (item as Episode)?.Series?.Name);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "[Projectionist] per-series preroll {Path} is not in the library yet (scan the library it lives in); using the global prerolls instead",
+                        seriesPick.Path);
+                }
             }
         }
 
@@ -227,32 +243,40 @@ public sealed class PrerollIntroProvider : IIntroProvider
             picks.InsertRange(0, comingSoonIntros);
         }
 
-        if (picks.Count == 0)
+        // ---- Build IntroInfo with real library item IDs (via HiddenLibraryManager) ----
+        // Jellyfin silently drops an intro whose id it can't find, so a clip
+        // that isn't a library item yet is left out here rather than counted
+        // as played.
+        var intros = new List<IntroInfo>(picks.Count);
+        var playedPaths = new List<string>(picks.Count);
+        foreach (var (path, prerollId) in picks)
+        {
+            var libraryItem = _hiddenLibrary.FindItem(path)
+                ?? (prerollId == Guid.Empty ? null : _libraryManager.GetItemById(prerollId));
+            if (libraryItem is Video)
+            {
+                intros.Add(new IntroInfo { Path = libraryItem.Path, ItemId = libraryItem.Id });
+                playedPaths.Add(path);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "[Projectionist] preroll {Path} is not a library item yet (scan the {Library} library); skipping it",
+                    path, HiddenLibraryManager.LibraryName);
+            }
+        }
+
+        if (intros.Count == 0)
         {
             _sessions.RecordPlayback(user.Id);
             if (item is Episode) _sessions.RecordEpisodePlayback(user.Id, seriesId);
             return Task.FromResult(Enumerable.Empty<IntroInfo>());
         }
 
-        // ---- Build IntroInfo with real library item IDs (via HiddenLibraryManager) ----
-        var intros = new List<IntroInfo>(picks.Count);
-        foreach (var (path, prerollId) in picks)
-        {
-            var libraryItem = _hiddenLibrary.FindItem(path);
-            if (libraryItem is not null)
-            {
-                intros.Add(new IntroInfo { Path = libraryItem.Path, ItemId = libraryItem.Id });
-            }
-            else
-            {
-                intros.Add(new IntroInfo { Path = path, ItemId = prerollId });
-            }
-        }
-
         // ---- Stats + session bookkeeping ----
         if (config.EnableStatsTracking)
         {
-            foreach (var (path, _) in picks) _stats.Record(path, user.Id);
+            foreach (var path in playedPaths) _stats.Record(path, user.Id);
         }
         _sessions.RecordPrerollPlayed(user.Id);
         if (item is Episode)

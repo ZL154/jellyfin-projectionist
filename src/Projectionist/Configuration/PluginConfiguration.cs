@@ -198,7 +198,7 @@ public class PluginConfiguration : BasePluginConfiguration
 
     /// <summary>
     /// If true, look for a `theme-preroll.mp4` (or any video file) in the series'
-    /// folder and use it as the preroll for episodes of that series, overriding
+    /// `extras` / `other` folder, or the series folder itself, and use it as the preroll for episodes of that series, overriding
     /// the global selection.
     /// </summary>
     public bool EnableSeriesPrerolls { get; set; } = true;

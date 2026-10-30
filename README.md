@@ -94,7 +94,7 @@ A Jellyfin plugin that plays preroll videos before movies **and** TV episodes. F
 
 - **Multiple folders** — add as many as you want; each has default tags
 - **Library rules** — match by Jellyfin library name and/or item type, require/exclude tags, or disable per rule. First match wins
-- **Series-specific prerolls** — drop a `theme-preroll.mp4` (configurable name) in any series folder. Overrides global selection for that show
+- **Series-specific prerolls** — put a `theme-preroll.mp4` (configurable name) in a show's `extras` folder (`Show/extras/theme-preroll.mp4`) and rescan. Overrides global selection for that show. A file left loose in the show folder still works but Jellyfin also lists it as an episode
 - **Trailer mode** — chain N local trailers from the feature's own metadata before it plays. Cinema-style "and now our feature presentation"
 - **Skippable prerolls** — skip-button overlay during preroll playback with a configurable min-seconds delay
 - **Feature preload** — best-effort web-client warmup that prepares Jellyfin playback info for the movie or episode while prerolls are running
